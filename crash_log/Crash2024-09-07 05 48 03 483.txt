@@ -1,0 +1,1 @@
+Error: ENOENT: no such file or directory, rename 'C:\Users\HP\AppData\Local\Temp\B_Bca-1bNNkhl9r9X2dUUGsN.jpg' -> 'C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\public\img\profile\20240907054803483TpgecZrmE9.jpg'

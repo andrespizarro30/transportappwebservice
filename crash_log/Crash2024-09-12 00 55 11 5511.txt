@@ -1,0 +1,11 @@
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1117:18)
+    at afterConnectMultiple (node:net:1684:7)
+    --------------------
+    at Protocol._enqueue (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mysql\lib\protocol\Protocol.js:144:48)
+    at Protocol.handshake (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mysql\lib\protocol\Protocol.js:51:23)
+    at Connection.connect (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mysql\lib\Connection.js:116:18)
+    at reconnect (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\helpers\db_helpers.js:18:16)
+    at Timeout._onTimeout (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\helpers\db_helpers.js:25:17)
+    at listOnTimeout (node:internal/timers:573:17)
+    at process.processTimers (node:internal/timers:514:7)
