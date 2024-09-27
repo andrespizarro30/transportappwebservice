@@ -1,0 +1,86 @@
+SyntaxError: Expected ',' or ']' after array element in JSON at position 76
+    at JSON.parse (<anonymous>)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:837:44
+    at Object.CheckParameterValid (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\helpers\helpers.js:69:20)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:833:20
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:1328:24
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at listOnTimeout (node:internal/timers:540:9)
+    at process.processTimers (node:internal/timers:514:7)Error: operation timed out for an unknown reason
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tarn\dist\PendingOperation.js:17:27
+    at runNextTicks (node:internal/process/task_queues:60:5)
+    at process.processTimers (node:internal/timers:511:9)RequestError: Timeout: Request failed to complete in 15000ms
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\request.js:449:19
+    at Array.forEach (<anonymous>)
+    at Request.userCallback (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\request.js:446:46)
+    at Request.callback (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\request.js:239:14)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:2692:24
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)RequestError: Timeout: Request failed to complete in 15000ms
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\request.js:449:19
+    at Array.forEach (<anonymous>)
+    at Request.userCallback (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\request.js:446:46)
+    at Request.callback (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\request.js:239:14)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:2692:24
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

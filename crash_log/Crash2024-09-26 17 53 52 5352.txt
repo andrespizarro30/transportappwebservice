@@ -1,0 +1,19 @@
+ConnectionError: Failed to connect to 192.168.10.17:1433 in 15000ms
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:634:26)
+    at Connection.emit (node:events:519:28)
+    at Connection.emit (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:970:18)
+    at Connection.connectTimeout (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:1222:10)
+    at Timeout._onTimeout (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:1167:12)
+    at listOnTimeout (node:internal/timers:573:17)
+    at process.processTimers (node:internal/timers:514:7)ConnectionError: Failed to connect to 192.168.10.17:1433 in 15000ms
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:634:26)
+    at Connection.emit (node:events:519:28)
+    at Connection.emit (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:970:18)
+    at Connection.connectTimeout (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:1222:10)
+    at Timeout._onTimeout (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:1167:12)
+    at listOnTimeout (node:internal/timers:573:17)
+    at process.processTimers (node:internal/timers:514:7)

@@ -1,10 +1,13 @@
 {
     "dbConfig": {
-        "user":"root",
-        "password":"",
-        "database":"taxi_app",
-        "multipleStatements": true,
-        "timezone":"utc-5",
-        "charset":"utf8mb4"
+        "user": "andresp",
+        "password": "123456",
+        "server": "192.168.10.10",
+        "port": 1433,
+        "database": "taxi_app",
+        "options":{
+            "encrypt":true,
+            "trustServerCertificate": true
+        }
     }
 }

@@ -1,0 +1,10 @@
+RequestError: Connection lost - read ECONNRESET
+    at handleError (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\request.js:384:15)
+    at Connection.emit (node:events:531:35)
+    at Connection.emit (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:970:18)
+    at Connection.socketError (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:1359:12)
+    at Socket.<anonymous> (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:1060:12)
+    at Socket.emit (node:events:531:35)
+    at emitErrorNT (node:internal/streams/destroy:169:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:128:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21)

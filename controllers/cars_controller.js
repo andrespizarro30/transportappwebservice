@@ -4,6 +4,32 @@ var multiparty = require('multiparty')
 var fs = require('fs');
 var imageSavePath = "./public/img/"
 
+var sql = require('mssql');
+
+const config = {
+    user: 'andresp',
+    password: '123456',
+    server: '192.168.10.17',
+    port: 1433,
+    database: 'taxi_app',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
+
+// const config = {
+//     user: 'andrespizarro',
+//     password: 'Daniel20',
+//     server: 'andrespizarro.database.windows.net',
+//     port: 1433,
+//     database: 'DY_RFID_DataBase',
+//     "options":{
+//         "encrypt":true,
+//         "trustServerCertificate": true
+//     }
+// }
+
 //User Type:
 const ut_admin = 4
 const ut_driver = 2
@@ -87,67 +113,75 @@ module.exports.controller = (app, io, socket_list) => {
     app.post('/api/car_list', (req, res) => {
         checkAccessToken(req.headers, res, (uObj) => {
 
-            db.query('SELECT  `uc`.`user_car_id`, `cs`.`series_name`, `cm`.`model_name`, `cb`.`brand_name`, `uc`.`car_number`, (CASE WHEN `uc`.`car_image` != ""  THEN CONCAT( "' + helper.ImagePath() + '" , `uc`.`car_image`  ) ELSE "" END) AS `car_image`, `uc`.`status`, `sd`.`service_name`, `sd`.`service_id`, `ud`.`select_service_id`, IFNULL(`zwcs`.`status`, 0) AS `service_status`,  (CASE WHEN `uc`.`user_car_id` = `ud`.`car_id` THEN 1 ELSE 0 END) AS `is_set_running`  FROM `user_cars` AS `uc` ' +
-                'INNER JOIN `car_series` AS `cs` ON  `uc`.`series_id` = `cs`.`series_id` ' +
-                'INNER JOIN `car_model` AS `cm` ON  `cm`.`model_id` = `cs`.`model_id` ' +
-                'INNER JOIN `car_brand` AS `cb` ON `cb`.`brand_id` = `cs`.`brand_id`  ' +
-                'INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `uc`.`user_id` ' +
-                'INNER JOIN `zone_document` AS `zwd` ON `zwd`.`zone_id` = `ud`.`zone_id` AND `zwd`.`status` = 1 ' +
-                'INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `zwd`.`service_id` ' +
-                'LEFT JOIN  `zone_wise_cars_service` AS  `zwcs` ON `zwcs`.`user_car_id` = `uc`.`user_car_id` AND `zwd`.`zone_doc_id` = `zwcs`.`zone_doc_id` '
-                + ' WHERE  `uc`.`user_id` = ? AND `uc`.`status` != ? GROUP BY `uc`.`user_car_id`, `sd`.`service_id` ORDER BY `uc`.`user_car_id`  ', [uObj.user_id, 2], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
-
-
-                    if (result.length > 0) {
-
-                        var car_list = [];
-                        var car_index = 0;
-
-                        result.forEach((carDetail, index) => {
-
-                            helper.Dlog(carDetail);
-
-                            if (carDetail.series_name == "") {
-                                result[index].series_name = "-"
-                            }
-
-                            if (index == 0) {
-                                car_list.push(carDetail);
-                                car_list[car_index].active_status = 1;
-                                car_list[car_index].service_missing_name = "";
-                            } else if (carDetail.user_car_id != car_list[car_index].user_car_id) {
-                                car_list[car_index].service_missing_name = car_list[car_index].service_missing_name.replace(/,\s*$/, "")
-                                car_list.push(carDetail);
-                                car_index++;
-                                car_list[car_index].active_status = 1;
-                                car_list[car_index].service_missing_name = "";
-                            }
-
-                            if (carDetail.select_service_id != "") {
-                                carDetail.select_service_id.split(",").forEach((series_id) => {
-                                    if (carDetail.service_status == 0 && series_id == carDetail.series_id) {
-                                        car_list[car_index].service_missing_name += carDetail.series_name + ","
-                                        car_list[car_index].active_status = 0
-                                    }
-                                })
-                            }
-                            delete car_list[car_index]["service_name"]
-                            delete car_list[car_index]["service_status"]
-
-                        });
-                        car_list[car_index].service_missing_name = car_list[car_index].service_missing_name.replace(/,\s*$/, "")
-
-                        res.json({ "status": "1", "payload": car_list })
-
-                    } else {
-                        res.json({ "status": "0", "message": "no car" })
-                    }
-                })
-
+            sql.connect(config).then(pool => {
+                return pool.request()
+                    .input('user_id', sql.Int, uObj.user_id)
+                    .input('status', sql.Int, 2)
+                    .query(`
+                        SELECT uc.user_car_id, cs.series_name, cm.model_name, cb.brand_name, uc.car_number,
+                            CASE WHEN uc.car_image != '' THEN CONCAT('${helper.ImagePath()}', uc.car_image) ELSE '' END AS car_image,
+                            uc.status, sd.service_name, sd.service_id, ud.select_service_id,
+                            ISNULL(zwcs.status, 0) AS service_status,
+                            CASE WHEN uc.user_car_id = ud.car_id THEN 1 ELSE 0 END AS is_set_running
+                        FROM user_cars AS uc
+                        INNER JOIN car_series AS cs ON uc.series_id = cs.series_id
+                        INNER JOIN car_model AS cm ON cm.model_id = cs.model_id
+                        INNER JOIN car_brand AS cb ON cb.brand_id = cs.brand_id
+                        INNER JOIN user_detail AS ud ON ud.user_id = uc.user_id
+                        INNER JOIN zone_document AS zwd ON zwd.zone_id = ud.zone_id AND zwd.status = 1
+                        INNER JOIN service_detail AS sd ON sd.service_id = zwd.service_id
+                        LEFT JOIN zone_wise_cars_service AS zwcs ON zwcs.user_car_id = uc.user_car_id AND zwd.zone_doc_id = zwcs.zone_doc_id
+                        WHERE uc.user_id = @user_id AND uc.status != @status
+                        GROUP BY uc.user_car_id,cs.series_name,cm.model_name, brand_name, sd.service_id, uc.car_number,car_image,uc.status,sd.service_name,
+                        ud.select_service_id,zwcs.status,ud.car_id
+                        ORDER BY uc.user_car_id
+                    `);
+            }).then(result => {
+                if (result.recordset.length > 0) {
+                    let car_list = [];
+                    let car_index = 0;
+        
+                    result.recordset.forEach((carDetail, index) => {
+                        helper.Dlog(carDetail);
+        
+                        if (carDetail.series_name === "") {
+                            carDetail.series_name = "-";
+                        }
+        
+                        if (index === 0) {
+                            car_list.push(carDetail);
+                            car_list[car_index].active_status = 1;
+                            car_list[car_index].service_missing_name = "";
+                        } else if (carDetail.user_car_id !== car_list[car_index].user_car_id) {
+                            car_list[car_index].service_missing_name = car_list[car_index].service_missing_name.replace(/,\s*$/, "");
+                            car_list.push(carDetail);
+                            car_index++;
+                            car_list[car_index].active_status = 1;
+                            car_list[car_index].service_missing_name = "";
+                        }
+        
+                        if (carDetail.select_service_id !== "") {
+                            carDetail.select_service_id.split(",").forEach(series_id => {
+                                if (carDetail.service_status === 0 && series_id === carDetail.series_id) {
+                                    car_list[car_index].service_missing_name += `${carDetail.series_name},`;
+                                    car_list[car_index].active_status = 0;
+                                }
+                            });
+                        }
+                        delete car_list[car_index]["service_name"];
+                        delete car_list[car_index]["service_status"];
+                    });
+        
+                    car_list[car_index].service_missing_name = car_list[car_index].service_missing_name.replace(/,\s*$/, "");
+        
+                    res.json({ "status": "1", "payload": car_list });
+        
+                } else {
+                    res.json({ "status": "0", "message": "no car" });
+                }
+            }).catch(err => {
+                helper.ThrowHtmlError(err, res);
+            });
 
         }, "2")
 
@@ -158,19 +192,23 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["user_car_id"], () => {
-                db.query('UPDATE  `user_cars` SET `status` = ? WHERE `user_car_id` = ? AND `user_id` = ? ', [2, reqObj.user_car_id, uObj.user_id], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
-
-                    if (result.affectedRows > 0) {
-                        res.json({ "status": "1", "message": "car deleted successfully" })
-
+                sql.connect(config).then(pool => {
+                    return pool.request()
+                        .input('status', sql.Int, 2)
+                        .input('user_car_id', sql.Int, reqObj.user_car_id)
+                        .input('user_id', sql.Int, uObj.user_id)
+                        .query('UPDATE user_cars SET status = @status WHERE user_car_id = @user_car_id AND user_id = @user_id')
+                })
+                .then(result => {
+                    if (result.rowsAffected[0] > 0) {
+                        res.json({ "status": "1", "message": "Car deleted successfully" });
                     } else {
-                        res.json({ "status": "0", "message": msg_fail })
+                        res.json({ "status": "0", "message": msg_fail });
                     }
                 })
+                .catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });    
             })
         }, "2")
     })
@@ -180,73 +218,83 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["user_car_id"], () => {
-                db.query('UPDATE `user_cars` AS `ucd` ' +
-                    "INNER JOIN `user_detail` AS `ud` ON `ucd`.`user_id` = `ud`.`user_id` " +
-                    "INNER JOIN `car_series` AS `cs` ON `cs`.`series_id` = `ucd`.`series_id` " +
-                    "INNER JOIN `car_model` AS `cm` ON `cs`.`model_id` = `cm`.`model_id` " +
-                    "INNER JOIN `car_brand` AS  `cb` ON `cb`.`brand_id` = `cs`.`brand_id` " +
-                    "SET `ud`.`car_id` = `ucd`.`user_car_id`, `ud`.`seat` = `cm`.`seat` " +
-                    "WHERE `ucd`.`user_car_id` = ? AND `ucd`.`user_id` = ? AND `ucd`.`status` = ?", [reqObj.user_car_id, uObj.user_id, 1], (err, result) => {
-                        if (err) {
-                            helper.ThrowHtmlError(err, res);
-                            return
-                        }
-
-
-                        if (result.affectedRows > 0) {
-
-                            db.query('SELECT  `uc`.`user_car_id`, `cs`.`series_name`, `cm`.`model_name`, `cb`.`brand_name`, `uc`.`car_number`,  (CASE WHEN `uc`.`car_image` != ""  THEN CONCAT( "' + helper.ImagePath() + '" , `uc`.`car_image`  ) ELSE "" END) AS `car_image`, `uc`.`status`,(CASE WHEN `uc`.`user_car_id` = `ud`.`car_id` THEN 1 ELSE 0 END) AS `is_set_running`  FROM `user_cars` AS `uc` ' +
-                                'INNER JOIN `car_series` AS `cs` ON  `uc`.`series_id` = `cs`.`series_id` ' +
-                                'INNER JOIN `car_model` AS `cm` ON  `cm`.`model_id` = `cs`.`model_id` ' +
-                                'INNER JOIN `car_brand` AS `cb` ON `cb`.`brand_id` = `cs`.`brand_id`  ' +
-                                'INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `uc`.`user_id` ' +
-                                "WHERE `uc`.`user_car_id` = ? AND `uc`.`status` = ? ", [reqObj.user_car_id, 1], (err, result) => {
-
-                                    if (err) {
-                                        helper.ThrowHtmlError(err, res);
-                                        return
-                                    }
-
-                                    if (result.length > 0) {
-                                        result.forEach((serObj, index) => {
-                                            if (serObj.series_name == "") {
-                                                result[index].series_name = "-"
-                                            }
-                                        });
-                                        res.json({ "status": "1", "payload": result, "message": "car set running successfully" })
-                                    } else {
-                                        res.json({ "status": "0", "message": `${msg_fail}-1` })
-                                    }
-                                })
-
-
-
-                        } else {
-                            res.json({ "status": "0", "message": `${msg_fail}-2` })
-                        }
-                    })
+                sql.connect(config).then(pool => {
+                    return pool.request()
+                        .input('user_car_id', sql.Int, reqObj.user_car_id)
+                        .input('user_id', sql.Int, uObj.user_id)
+                        .input('status', sql.Int, 1)
+                        .query(
+                            `UPDATE user_detail 
+                            SET user_detail.car_id = user_cars.user_car_id, user_detail.seat = car_model.seat 
+                            FROM user_cars
+                            INNER JOIN user_detail ON user_cars.user_id = user_detail.user_id 
+                            INNER JOIN car_series ON car_series.series_id = user_cars.series_id 
+                            INNER JOIN car_model ON car_series.model_id = car_model.model_id 
+                            INNER JOIN car_brand ON car_brand.brand_id = car_series.brand_id 
+                            WHERE user_cars.user_car_id = @user_car_id 
+                            AND user_cars.user_id = @user_id 
+                            AND user_cars.status = @status`
+                        );
+                })
+                .then(result => {
+                    if (result.rowsAffected[0] > 0) {
+                        return sql.connect(config).then(pool => {
+                            return pool.request()
+                                .input('user_car_id', sql.Int, reqObj.user_car_id)
+                                .input('status', sql.Int, 1)
+                                .query(
+                                    `SELECT uc.user_car_id, cs.series_name, cm.model_name, cb.brand_name, uc.car_number, 
+                                    (CASE WHEN uc.car_image != '' THEN CONCAT('${helper.ImagePath()}', uc.car_image) ELSE '' END) AS car_image, 
+                                    uc.status, (CASE WHEN uc.user_car_id = ud.car_id THEN 1 ELSE 0 END) AS is_set_running 
+                                    FROM user_cars AS uc 
+                                    INNER JOIN car_series AS cs ON uc.series_id = cs.series_id 
+                                    INNER JOIN car_model AS cm ON cm.model_id = cs.model_id 
+                                    INNER JOIN car_brand AS cb ON cb.brand_id = cs.brand_id 
+                                    INNER JOIN user_detail AS ud ON ud.user_id = uc.user_id 
+                                    WHERE uc.user_car_id = @user_car_id AND uc.status = @status`
+                                );
+                        });
+                    } else {
+                        res.json({ "status": "0", "message": `${msg_fail}-2` });
+                    }
+                })
+                .then(result => {
+                    if (result.recordset.length > 0) {
+                        result.recordset.forEach((serObj, index) => {
+                            if (serObj.series_name === "") {
+                                result.recordset[index].series_name = "-";
+                            }
+                        });
+                        res.json({ "status": "1", "payload": result.recordset, "message": "car set running successfully" });
+                    } else {
+                        res.json({ "status": "0", "message": `${msg_fail}-1` });
+                    }
+                })
+                .catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
         }, "2")
     })
 
     app.post('/api/brand_list', (req, res) => {
         checkAccessToken(req.headers, res, (uObj) => {
-            db.query('SELECT `brand_id`, `brand_name` FROM `car_brand` WHERE `status` != ?', [2], (err, result) => {
-                if (err) {
-                    helper.ThrowHtmlError(err, res);
-                    return
-                }
-
-                var other_dict = { 'brand_id': 0, 'brand_name': "Other" };
-
-                if (result.length > 0) {
-                    result.push(other_dict)
-                    res.json({ "status": "1", "payload": result })
-
+            sql.connect(config).then(pool => {
+                return pool.request()
+                    .input('status', sql.Int, 2)
+                    .query('SELECT brand_id, brand_name FROM car_brand WHERE status != @status');
+            }).then(result => {
+                const other_dict = { 'brand_id': 0, 'brand_name': "Other" };
+        
+                if (result.recordset.length > 0) {
+                    result.recordset.push(other_dict);
+                    res.json({ "status": "1", "payload": result.recordset });
                 } else {
-                    res.json({ "status": "1", "payload": [other_dict] })
+                    res.json({ "status": "1", "payload": [other_dict] });
                 }
-            })
+            }).catch(err => {
+                helper.ThrowHtmlError(err, res);
+            });
         })
 
     })
@@ -256,23 +304,25 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["brand_id"], () => {
-                db.query('SELECT `cm`.`model_id`, `cm`.`model_name`, `cm`.`seat` FROM `car_model` AS `cm` ' +
-                    'INNER JOIN `car_brand` AS `cb` ON `cb`.`brand_id` = `cm`.`brand_id` AND `cm`.`brand_id` = ?  '
-                    + ' WHERE  `cm`.`status` != ?', [reqObj.brand_id, 2], (err, result) => {
-                        if (err) {
-                            helper.ThrowHtmlError(err, res);
-                            return
-                        }
-
-                        var other_dict = { 'model_id': 0, 'model_name': "Other", "seat": "0" };
-                        if (result.length > 0) {
-                            result.push(other_dict)
-                            res.json({ "status": "1", "payload": result })
-
-                        } else {
-                            res.json({ "status": "1", "payload": [other_dict] })
-                        }
-                    })
+                sql.connect(config).then(pool => {
+                    return pool.request()
+                        .input('brand_id', sql.Int, reqObj.brand_id)
+                        .input('status', sql.Int, 2)
+                        .query('SELECT cm.model_id, cm.model_name, cm.seat FROM car_model AS cm ' +
+                               'INNER JOIN car_brand AS cb ON cb.brand_id = cm.brand_id AND cm.brand_id = @brand_id ' +
+                               'WHERE cm.status != @status');
+                }).then(result => {
+                    const other_dict = { 'model_id': 0, 'model_name': "Other", "seat": "0" };
+            
+                    if (result.recordset.length > 0) {
+                        result.recordset.push(other_dict);
+                        res.json({ "status": "1", "payload": result.recordset });
+                    } else {
+                        res.json({ "status": "1", "payload": [other_dict] });
+                    }
+                }).catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
 
         })
@@ -285,29 +335,31 @@ module.exports.controller = (app, io, socket_list) => {
         checkAccessToken(req.headers, res, (uObj) => {
 
             helper.CheckParameterValid(res, reqObj, ["model_id"], () => {
-                db.query('SELECT  `cs`.`series_id`, `cs`.`series_name` FROM `car_series` AS `cs` ' +
-                    'INNER JOIN `car_model` AS `cm` ON `cm`.`model_id` = `cs`.`model_id`  AND `cs`.`model_id` = ?  ' +
-
-                    ' WHERE `cs`.`status` != ?', [reqObj.model_id, 2], (err, result) => {
-                        if (err) {
-                            helper.ThrowHtmlError(err, res);
-                            return
-                        }
-                        var other_dict = { 'series_id': 0, 'series_name': "Other" };
-                        if (result.length > 0) {
-
-                            result.forEach((serObj, index) => {
-                                if (serObj.series_name == "") {
-                                    result[index].series_name = "-"
-                                }
-                            });
-                            result.push(other_dict)
-                            res.json({ "status": "1", "payload": result })
-
-                        } else {
-                            res.json({ "status": "1", "payload": [other_dict] })
-                        }
-                    })
+                sql.connect(config).then(pool => {
+                    return pool.request()
+                        .input('model_id', sql.Int, reqObj.model_id)
+                        .input('status', sql.Int, 2)
+                        .query('SELECT cs.series_id, cs.series_name FROM car_series AS cs ' +
+                               'INNER JOIN car_model AS cm ON cm.model_id = cs.model_id AND cs.model_id = @model_id ' +
+                               'WHERE cs.status != @status');
+                }).then(result => {
+                    const other_dict = { 'series_id': 0, 'series_name': "Other" };
+                    const seriesList = result.recordset;
+            
+                    if (seriesList.length > 0) {
+                        seriesList.forEach((serObj, index) => {
+                            if (serObj.series_name === "") {
+                                seriesList[index].series_name = "-";
+                            }
+                        });
+                        seriesList.push(other_dict);
+                        res.json({ "status": "1", "payload": seriesList });
+                    } else {
+                        res.json({ "status": "1", "payload": [other_dict] });
+                    }
+                }).catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
         })
 
@@ -819,171 +871,221 @@ module.exports.controller = (app, io, socket_list) => {
 }
 
 function car_brand_add(car_brand, callback) {
-    db.query('SELECT `brand_id`, `brand_name`, `status`, `created_date`, `modify_date` FROM `car_brand` WHERE `brand_name` = ?', [car_brand.toUpperCase()], (err, result) => {
-        if (err) {
-            helper.ThrowHtmlError(err);
-            return
-        }
-
-        if (result.length > 0) {
-            //Exits 
-            db.query('UPDATE `car_brand` SET `modify_date` = (CASE WHEN  `status` = "2" THEN  NOW() ELSE `modify_date` END), `status` = (CASE WHEN  `status` = "2" THEN  0 ELSE `status` END) WHERE `brand_id` = ? ', [result[0].brand_id], (err, result) => {
-                if (err) {
-                    helper.ThrowHtmlError(err);
-                }
-            })
-            return callback(result[0].brand_id);
+    sql.query`
+        SELECT brand_id, brand_name, status, created_date, modify_date
+        FROM car_brand
+        WHERE brand_name = ${car_brand.toUpperCase()}
+    `
+    .then(result => {
+        if (result.recordset.length > 0) {
+            // Brand exists, perform an update
+            return sql.query`
+                UPDATE car_brand
+                SET modify_date = CASE WHEN status = 2 THEN GETDATE() ELSE modify_date END,
+                    status = CASE WHEN status = 2 THEN 0 ELSE status END
+                WHERE brand_id = ${result.recordset[0].brand_id}
+            `
+            .then(() => callback(result.recordset[0].brand_id))
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                callback(null);
+            });
         } else {
-            //Add New 
-            db.query("INSERT INTO `car_brand`( `brand_name`) VALUES (?)", [car_brand.toUpperCase()], (err, result) => {
-                if (err) {
-                    helper.ThrowHtmlError(err);
-                    return
-                }
-                return callback(result.insertId);
-            })
+            // Brand does not exist, perform an insert
+            return sql.query`
+                INSERT INTO car_brand (brand_name)
+                VALUES (${car_brand.toUpperCase()});
+                SELECT SCOPE_IDENTITY() AS brand_id;
+            `
+            .then(insertResult => callback(insertResult.recordset[0].brand_id))
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                callback(null);
+            });
         }
     })
+    .catch(err => {
+        helper.ThrowHtmlError(err);
+        callback(null);
+    });
 }
 
 function car_model_add(brand_id, car_model, seat, callback) {
-    db.query('SELECT `model_id`, `brand_id`, `model_name`, `seat`, `status`, `created_date`, `modify_date` FROM `car_model` WHERE `brand_id` = ? AND `model_name` = ? AND `seat` = ?', [brand_id, car_model.toUpperCase(), seat], (err, result) => {
-        if (err) {
-            helper.ThrowHtmlError(err);
-            return
-        }
-
-        if (result.length > 0) {
-            //Exits 
-            db.query('UPDATE `car_brand` AS `cb` ' +
-                'INNER JOIN `car_model` AS `cm` ON `cb`.`brand_id` = `cm`.`brand_id` ' +
-                'SET `cm`.`modify_date` = (CASE WHEN  `cm`.`status` = "2" THEN  NOW() ELSE `cm`.`modify_date` END), `cm`.`status` = (CASE WHEN  `cm`.`status` = "2" THEN  0 ELSE `cm`.`status` END) ' +
-                '`cb`.`modify_date` = (CASE WHEN  `cb`.`status` = "2" THEN  NOW() ELSE `cb`.`modify_date` END), `cb`.`status` = (CASE WHEN  `cb`.`status` = "2" THEN  0 ELSE `cb`.`status` END)' +
-                ' WHERE `cm`.`model_id` = ? ', [result[0].model_id], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err);
-                    }
-                })
-            return callback(result[0].model_id);
+    // Check if the model exists
+    sql.query`
+        SELECT model_id, brand_id, model_name, seat, status, created_date, modify_date
+        FROM car_model
+        WHERE brand_id = ${brand_id} AND model_name = ${car_model.toUpperCase()} AND seat = ${seat}
+    `
+    .then(result => {
+        if (result.recordset.length > 0) {
+            // Model exists, perform an update
+            return sql.query`
+                UPDATE car_brand AS cb
+                INNER JOIN car_model AS cm ON cb.brand_id = cm.brand_id
+                SET cm.modify_date = CASE WHEN cm.status = 2 THEN GETDATE() ELSE cm.modify_date END,
+                    cm.status = CASE WHEN cm.status = 2 THEN 0 ELSE cm.status END,
+                    cb.modify_date = CASE WHEN cb.status = 2 THEN GETDATE() ELSE cb.modify_date END,
+                    cb.status = CASE WHEN cb.status = 2 THEN 0 ELSE cb.status END
+                WHERE cm.model_id = ${result.recordset[0].model_id}
+            `
+            .then(() => callback(result.recordset[0].model_id))
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                callback(null);
+            });
         } else {
-            //Add New 
-            db.query("INSERT INTO `car_model` ( `brand_id`, `model_name`, `seat` ) VALUES (?,?,?)", [brand_id, car_model.toUpperCase(), seat], (err, result) => {
-                if (err) {
-                    helper.ThrowHtmlError(err);
-                    return
-                }
-                return callback(result.insertId);
-            })
+            // Model does not exist, perform an insert
+            return sql.query`
+                INSERT INTO car_model (brand_id, model_name, seat)
+                VALUES (${brand_id}, ${car_model.toUpperCase()}, ${seat});
+                SELECT SCOPE_IDENTITY() AS model_id;
+            `
+            .then(insertResult => callback(insertResult.recordset[0].model_id))
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                callback(null);
+            });
         }
     })
+    .catch(err => {
+        helper.ThrowHtmlError(err);
+        callback(null);
+    });
 }
 
 function car_series_add(brand_id, model_id, car_series, callback) {
-    db.query('SELECT `series_id`, `brand_id`, `model_id`, `series_name`, `status`, `created_date`, `modify_date` FROM `car_series` WHERE `brand_id` = ? AND `model_id` = ? AND `series_name` = ?', [brand_id, model_id, car_series.toUpperCase()], (err, result) => {
-        if (err) {
-            helper.ThrowHtmlError(err);
-            return
-        }
-
-        if (result.length > 0) {
-            //Exits 
-            db.query('UPDATE `car_brand` AS `cb` ' +
-                'INNER JOIN `car_model` AS `cm` ON `cb`.`brand_id` = `cm`.`brand_id` ' +
-                'INNER JOIN `car_series` AS `cs` ON `cs`.`model_id` = `cm`.`model_id` ' +
-                'SET `cm`.`modify_date` = (CASE WHEN  `cm`.`status` = "2" THEN  NOW() ELSE `cm`.`modify_date` END), `cm`.`status` = (CASE WHEN  `cm`.`status` = "2" THEN  0 ELSE `cm`.`status` END) ' +
-                '`cb`.`modify_date` = (CASE WHEN  `cb`.`status` = "2" THEN  NOW() ELSE `cb`.`modify_date` END), `cb`.`status` = (CASE WHEN  `cb`.`status` = "2" THEN  0 ELSE `cb`.`status` END)' +
-                '`cs`.`modify_date` = (CASE WHEN  `cs`.`status` = "2" THEN  NOW() ELSE `cs`.`modify_date` END), `cs`.`status` = (CASE WHEN  `cs`.`status` = "2" THEN  0 ELSE `cs`.`status` END)' +
-                ' WHERE `cs`.`series_id` = ? ', [result[0].series_id], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err);
-                    }
-                })
-            return callback(result[0].series_id);
+    sql.query`
+        SELECT series_id, brand_id, model_id, series_name, status, created_date, modify_date
+        FROM car_series
+        WHERE brand_id = ${brand_id} AND model_id = ${model_id} AND series_name = ${car_series.toUpperCase()}
+    `
+    .then(result => {
+        if (result.recordset.length > 0) {
+            // Series exists, perform an update
+            return sql.query`
+                UPDATE car_brand AS cb
+                INNER JOIN car_model AS cm ON cb.brand_id = cm.brand_id
+                INNER JOIN car_series AS cs ON cs.model_id = cm.model_id
+                SET cm.modify_date = CASE WHEN cm.status = 2 THEN GETDATE() ELSE cm.modify_date END,
+                    cm.status = CASE WHEN cm.status = 2 THEN 0 ELSE cm.status END,
+                    cb.modify_date = CASE WHEN cb.status = 2 THEN GETDATE() ELSE cb.modify_date END,
+                    cb.status = CASE WHEN cb.status = 2 THEN 0 ELSE cb.status END,
+                    cs.modify_date = CASE WHEN cs.status = 2 THEN GETDATE() ELSE cs.modify_date END,
+                    cs.status = CASE WHEN cs.status = 2 THEN 0 ELSE cs.status END
+                WHERE cs.series_id = ${result.recordset[0].series_id}
+            `
+            .then(() => callback(result.recordset[0].series_id))
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                callback(null);
+            });
         } else {
-            //Add New 
-            db.query("INSERT INTO `car_series`( `brand_id`, `model_id`, `series_name` ) VALUES (?,?,?)", [brand_id, model_id, car_series], (err, result) => {
-                if (err) {
-                    helper.ThrowHtmlError(err);
-                    return
-                }
-                return callback(result.insertId);
-            })
+            // Series does not exist, perform an insert
+            return sql.query`
+                INSERT INTO car_series (brand_id, model_id, series_name)
+                VALUES (${brand_id}, ${model_id}, ${car_series})
+                SELECT SCOPE_IDENTITY() AS series_id
+            `
+            .then(insertResult => callback(insertResult.recordset[0].series_id))
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                callback(null);
+            });
         }
     })
+    .catch(err => {
+        helper.ThrowHtmlError(err);
+        callback(null);
+    });
 }
 
 function user_car_add(user_id, series_id, car_number, car_image_path, callback) {
-    helper.Dlog("calling user_car_add");
-    db.query("SELECT `user_car_id` FROM `user_cars` WHERE `user_id` = ? AND `series_id` = ? AND `car_number` = ? AND `status` != 2 ", [user_id, series_id, car_number], (err, result) => {
-        if (err) {
-            helper.ThrowHtmlError(err);
-            return callback({ "status": "0", "message": msg_fail });
-        }
 
-        if (result.length == 0) {
+    // Check if the car already exists
+    sql.query`
+        SELECT user_car_id
+        FROM user_cars
+        WHERE user_id = ${user_id} AND series_id = ${series_id} AND car_number = ${car_number} AND status != 2
+    `
+    .then(result => {
+        if (result.recordset.length == 0) {
+            // Car does not exist, proceed with file operations and insertion
             var extension = car_image_path.originalFilename.substring(car_image_path.originalFilename.lastIndexOf(".") + 1);
             var imageFileName = "car/" + helper.fileNameGenerate(extension);
-
             var newPath = imageSavePath + imageFileName;
 
-            fs.rename(car_image_path.path, newPath, (err) => {
-
-                if (err) {
-                    helper.ThrowHtmlError(err);
-                    return;
-                } else {
-                    helper.Dlog("image save done");
-
-                }
+            // Rename (move) the file
+            return new Promise((resolve, reject) => {
+                fs.rename(car_image_path.path, newPath, err => {
+                    if (err) {
+                        helper.ThrowHtmlError(err);
+                        reject(err);
+                    } else {
+                        helper.Dlog("image save done");
+                        resolve(imageFileName);
+                    }
+                });
             })
-
-            db.query("INSERT INTO `user_cars`( `user_id`, `series_id`, `car_number`, `car_image`) VALUES (?,?,?, ? )", [
-                user_id, series_id, car_number, imageFileName,
-            ], (err, result) => {
-                if (err) {
-                    helper.ThrowHtmlError(err);
-                    return callback({ "status": "0", "message": msg_fail });
-                }
-
-                if (result) {
-                    return callback({ "status": "1", "message": "car added successfully" });
-                } else {
-                    return callback({ "status": "0", "message": msg_fail });
-                }
+            .then(imageFileName => {
+                // Insert new car record
+                helper.Dlog(`${user_id}-${series_id}-${car_number}-${imageFileName}`);
+                return sql.query`
+                    INSERT INTO user_cars (user_id, series_id, car_number, car_image)
+                    VALUES (${user_id}, ${series_id}, ${car_number}, ${imageFileName})
+                `;
             })
-
+            .then(() => {
+                callback({ status: "1", message: "car added successfully" });
+            })
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                callback({ status: "0", message: msg_fail });
+            });
         } else {
-            return callback({ "status": "0", "message": "this car already added" });
+            // Car already exists
+            callback({ status: "0", message: "this car already added" });
         }
     })
+    .catch(err => {
+        helper.ThrowHtmlError(err);
+        callback({ status: "0", message: msg_fail });
+    });
 }
 
 function checkAccessToken(helperObj, res, callback, requireType = "") {
     helper.Dlog(helperObj.access_token)
     helper.CheckParameterValid(res, helperObj, ["access_token"], () => {
-        db.query('SELECT `user_id`, `name`, `email`, `gender`, `mobile`, `mobile_code`, `auth_token`,  `user_type`, `is_block`,  `image`, `status` FROM `user_detail` WHERE  `auth_token` = ? AND (`status` = ? OR `status` = ?) ', [helperObj.access_token, "1", "2"], (err, result) => {
-
-            if (err) {
-                helper.ThrowHtmlError(err);
-                return
-            }
-
-            helper.Dlog(result)
-
-            if (result.length > 0) {
-                if (requireType != "") {
-                    if (requireType == result[0].user_type) {
-                        return callback(result[0])
+        sql.connect(config).then(pool => {
+            return pool.request()
+                .input('auth_token', sql.VarChar, helperObj.access_token)
+                .input('status1', sql.VarChar, "1")
+                .input('status2', sql.VarChar, "2")
+                .query(`
+                    SELECT user_id, name, email, gender, mobile, mobile_code, auth_token, user_type, is_block, image, status
+                    FROM user_detail
+                    WHERE auth_token = @auth_token
+                    AND (status = @status1 OR status = @status2)
+                `);
+        }).then(result => {
+            helper.Dlog(result.recordset);
+            if (result.recordset.length > 0) {
+                const user = result.recordset[0];
+                if (requireType !== "") {
+                    if (requireType == user.user_type) {
+                        callback(result.recordset[0]);
                     } else {
-                        res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." })
+                        res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access 1." });
                     }
                 } else {
-                    return callback(result[0])
+                    callback(result.recordset[0]);
                 }
-
+    
             } else {
-                res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." })
+                res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access 2." });
             }
-        })
+        }).catch(err => {
+            helper.ThrowHtmlError(err);
+        });
     })
 }

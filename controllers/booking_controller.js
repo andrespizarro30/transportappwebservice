@@ -5,6 +5,32 @@ var fs = require('fs');
 const { duration } = require('moment-timezone');
 var imageSavePath = "./public/img/"
 
+var sql = require('mssql');
+
+const config = {
+    user: 'andresp',
+    password: '123456',
+    server: '192.168.10.17',
+    port: 1433,
+    database: 'taxi_app',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
+
+// const config = {
+//     user: 'andrespizarro',
+//     password: 'Daniel20',
+//     server: 'andrespizarro.database.windows.net',
+//     port: 1433,
+//     database: 'DY_RFID_DataBase',
+//     "options":{
+//         "encrypt":true,
+//         "trustServerCertificate": true
+//     }
+// }
+
 //Booking Status
 
 const bs_pending = 0
@@ -15,7 +41,7 @@ const bs_start = 4
 const bs_complete = 5
 const bs_cancel = 6
 const bs_no_driver = 7
-const rideCommissionVal = 10.0
+const rideCommissionVal = 0
 
 //Notification ID
 
@@ -69,6 +95,9 @@ module.exports.controller = (app, io, socket_list) => {
 
     //App Api
 
+    //Check Per Pending Request  8:45 to 9:15 
+    //Booking Time = 9:00 
+
     app.post('/api/booking_request', (req, res) => {
         helper.Dlog(req.body);
         var reqObj = req.body;
@@ -76,170 +105,148 @@ module.exports.controller = (app, io, socket_list) => {
             helper.CheckParameterValid(res, reqObj, ["pickup_latitude", "pickup_longitude", "pickup_address", "drop_latitude", "drop_longitude", "drop_address", "pickup_date", "payment_type", "card_id", "price_id", "est_total_distance", 'est_duration', 'amount', "service_id"], () => {
 
                 helper.Dlog(" Date Time:  " + helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", -newRequestTimeABC) + " , " + helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", newRequestTimeABC));
-                db.query(
+                
+                sql.connect(config).then((pool) => {
+                    return pool
+                      .request()
+                      .input('user_id', sql.Int, uObj.user_id)
+                      .input('pickup_start', sql.DateTime, helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", -newRequestTimeABC))
+                      .input('pickup_end', sql.DateTime, helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", newRequestTimeABC))
+                      .input('booking_status', sql.Int, bs_complete)
+                      .input('price_id', sql.Int, reqObj.price_id)
+                      .query(
+                        `SELECT COUNT(*) AS booking_count 
+                        FROM booking_detail 
+                        WHERE user_id = @user_id 
+                        AND (pickup_date BETWEEN @pickup_start AND @pickup_end) 
+                        AND booking_status < @booking_status;
+                
+                        SELECT pd.base_charge, pd.booking_charge, zl.tax, pd.per_km_charge, 
+                        pd.per_min_charge, pd.mini_fair, pd.mini_km, pd.cancel_charge 
+                        FROM price_detail AS pd 
+                        INNER JOIN zone_list AS zl ON zl.zone_id = pd.zone_id 
+                        WHERE pd.price_id = @price_id;`
+                      );
+                  })
+                  .then((result) => {
+                    const bookingCount = result.recordsets[0][0].booking_count;
+                    const priceDetails = result.recordsets[1];
+                
+                    if (bookingCount === 0) {
+                      if (priceDetails.length > 0) {
+                        const amount = parseInt(reqObj.amount);
+                        const totalAmount = (amount * 100) / (100 + parseInt(priceDetails[0].tax));
+                        const taxAmount = (amount - totalAmount).toFixed(3);
+                        const driverAmount = (
+                          (totalAmount - parseFloat(priceDetails[0].booking_charge)) * 
+                          (1 - rideCommissionVal / 100.0)
+                        ).toFixed(2);
+                        const rideCommission = (totalAmount - driverAmount).toFixed(2);
+                
+                        helper.Dlog([reqObj.card_id, reqObj.payment_type, amount, 0, driverAmount, taxAmount, rideCommission]);
+                
+                        return sql
+                          .connect(config)
+                          .then((pool) => {
+                            return pool
+                              .request()
+                              .input('card_id', sql.Int, reqObj.card_id)
+                              .input('payment_type', sql.VarChar, reqObj.payment_type)
+                              .input('amt', sql.Decimal, amount)
+                              .input('discount_amt', sql.Decimal, 0)
+                              .input('driver_amt', sql.Decimal, driverAmount)
+                              .input('tax_amt', sql.Decimal, taxAmount)
+                              .input('ride_commission', sql.Decimal, rideCommission)
+                              .query(
+                                `INSERT INTO payment_detail (card_id, payment_type, amt, discount_amt, driver_amt, tax_amt, ride_commission, created_date, modify_date)
+                                 VALUES (@card_id, @payment_type, @amt, @discount_amt, @driver_amt, @tax_amt, @ride_commission, GETDATE(), GETDATE());
+                                 SELECT SCOPE_IDENTITY() AS payment_id;`
+                              );
+                          })
+                          .then((pResult) => {
+                            const paymentId = pResult.recordset[0].payment_id;
+                
+                            return sql
+                              .connect(config)
+                              .then((pool) => {
+                                return pool
+                                  .request()
+                                  .input('user_id', sql.Int, uObj.user_id)
+                                  .input('pickup_lat', sql.Float, reqObj.pickup_latitude)
+                                  .input('pickup_long', sql.Float, reqObj.pickup_longitude)
+                                  .input('pickup_address', sql.VarChar, reqObj.pickup_address)
+                                  .input('drop_lat', sql.Float, reqObj.drop_latitude)
+                                  .input('drop_long', sql.Float, reqObj.drop_longitude)
+                                  .input('drop_address', sql.VarChar, reqObj.drop_address)
+                                  .input('pickup_date', sql.DateTime, reqObj.pickup_date)
+                                  .input('service_id', sql.Int, reqObj.service_id)
+                                  .input('price_id', sql.Int, reqObj.price_id)
+                                  .input('payment_id', sql.Int, paymentId)
+                                  .input('est_total_distance', sql.Float, reqObj.est_total_distance)
+                                  .input('est_duration', sql.Float, reqObj.est_duration)
+                                  .query(
+                                    `INSERT INTO booking_detail (user_id, pickup_lat, pickup_long, pickup_address, drop_lat, drop_long, drop_address, pickup_date, service_id, price_id, payment_id, est_total_distance, est_duration, created_date)
+                                    VALUES (@user_id, @pickup_lat, @pickup_long, @pickup_address, @drop_lat, @drop_long, @drop_address, '${reqObj.pickup_date}', @service_id, @price_id, @payment_id, @est_total_distance, @est_duration, GETDATE());
+                                    SELECT SCOPE_IDENTITY() AS booking_id;`
+                                  );
+                              });
+                          })
+                          .then((bookingResult) => {
 
-                    //Check Per Pending Request  8:45 to 9:15 
-                    //Booking Time = 9:00 
-
-
-
-                    "SELECT COUNT (*) AS `booking_count` FROM `booking_detail` WHERE `user_id` = ? AND (`pickup_date` BETWEEN ? AND ?) AND `booking_status` < ? ;" +
-
-                    "SELECT `pd`.`base_charge`, `pd`.`booking_charge`, `zl`.`tax`, `pd`.`per_km_charge`, `pd`.`per_min_charge`, `pd`.`mini_fair`, `pd`.`mini_km`, `cancel_charge` FROM `price_detail` AS `pd` INNER JOIN `zone_list` AS `zl` ON `zl`.`zone_id` = `pd`.`zone_id` WHERE `pd`.`price_id` = ? ;",
-
-
-
-
-                    [uObj.user_id, helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", -newRequestTimeABC), helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", newRequestTimeABC), bs_complete, reqObj.price_id], (err, result) => {
-
-                        if (err) {
-                            helper.ThrowHtmlError(err, res);
-                            return
-                        }
-
-                        if (result[0][0].booking_count == 0) {
-
-                            if (result[1].length > 0) {
-
-                                var amount = parseInt(reqObj.amount);
-                                var driverAmount = '0';
-                                var rideCommission = '0';
-                                var taxAmount = '0';
-
-                                // 110% 1000
-                                var totalAmount = amount * 100 / (100 + parseInt(result[1][0].tax)) // 1000 * 100 / (100 + 10)
-
-
-                                //10 %
-                                taxAmount = (amount - totalAmount).toFixed(3); // 110% - 100% = 10% amount
-
-                                driverAmount = ((totalAmount - parseFloat(result[1][0].booking_charge)) * (1 - (rideCommissionVal / 100.0))).toFixed(2)
-
-                                rideCommission = parseFloat(totalAmount - driverAmount).toFixed(2)
-
-                                helper.Dlog([
-
-                                    reqObj.card_id, reqObj.payment_type, amount, 0,
-                                    driverAmount, taxAmount, rideCommission
-                                ]);
-
-                                db.query("INSERT INTO `payment_detail` ( `card_id`, `payment_type`, `amt`, `discount_amt`, `driver_amt`, `tax_amt`, `ride_commission`,  `created_date`, `modify_date` ) VALUES (?,?,?, ?,?,?, ?,NOW(),NOW()) ", [
-
-                                    reqObj.card_id, reqObj.payment_type, amount, 0,
-                                    driverAmount, taxAmount, rideCommission
-                                ], (err, pResult) => {
-
-                                    if (err) {
-                                        helper.ThrowHtmlError(err, res);
-                                        return
-                                    }
-
-                                    if (pResult) {
-
-                                        db.query(
-                                            "INSERT INTO `booking_detail`( `user_id`, `pickup_lat`, `pickup_long`, `pickup_address`, `drop_lat`, `drop_long`, `drop_address`, `pickup_date`, `service_id`, `price_id`, `payment_id`, `est_total_distance`, `est_duration`,  `created_date`) VALUES (?,?,?, ?,?,?, ?,?,?,  ?,?,?, ?, NOW())", [
-
-                                            uObj.user_id, reqObj.pickup_latitude, reqObj.pickup_longitude,
-
-                                            reqObj.pickup_address, reqObj.drop_latitude, reqObj.drop_longitude, reqObj.drop_address, reqObj.pickup_date, reqObj.service_id, reqObj.price_id, pResult.insertId, reqObj.est_total_distance, reqObj.est_duration
-
-                                        ], (err, result) => {
-
-                                            if (err) {
-                                                helper.ThrowHtmlError(err, res);
-                                                return
-                                            }
-
-                                            if (result) {
-                                                // UserBooking  Done
-
-                                                db.query("SELECT `bd`.`booking_id`, `bd`.`driver_id`, `bd`.`user_id`, `bd`.`pickup_lat`, `bd`.`pickup_long`, `bd`.`pickup_address`, `bd`.`drop_lat`, `bd`.`drop_long`, `bd`.`drop_address`, `bd`.`pickup_date`, `bd`.`service_id`, `bd`.`price_id`, `bd`.`payment_id`, `bd`.`est_total_distance`, `bd`.`est_duration`,  `bd`.`created_date`, `bd`.`accpet_time`, `bd`.`start_time`, `bd`.`stop_time`, `bd`.`booking_status`, `bd`.`request_driver_id`, `pd`.`zone_id`, `pd`.`mini_km`, `sd`.`service_name`, `sd`.`color`, `sd`.`icon`, `ud`.`name`, `ud`.`mobile`, `ud`.`mobile_code`, `ud`.`push_token`, (CASE WHEN `ud`.`image` != ''  THEN CONCAT( '" + helper.ImagePath() + "' , `ud`.`image`  ) ELSE '' END) AS `image`, `ppd`.`amt`, `ppd`.`driver_amt`, `ppd`.`payment_type` FROM `booking_detail` AS `bd` " +
-                                                    "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`user_id` " +
-                                                    "INNER JOIN `price_detail` AS `pd` ON `pd`.`price_id` = `bd`.`price_id` " +
-                                                    "INNER JOIN `payment_detail` AS `ppd` ON `ppd`.`payment_id` = `bd`.`payment_id` " +
-                                                    "INNER JOIN `service_detail` AS `sd` ON `bd`.`service_id` = `sd`.`service_id` " +
-
-                                                    //payment_detail
-                                                    "WHERE `bd`.`booking_id` = ? AND `bd`.`booking_status` = ?",
-
-                                                    [result.insertId, bs_pending], (err, result) => {
-
-                                                        if (err) {
-                                                            helper.ThrowHtmlError(err, res);
-                                                            return
-                                                        }
-
-
-                                                        if (result.length > 0) {
-                                                            driverNewRequestSend(result[0], (status, bookingInfo) => {
-
-                                                                helper.Dlog("-------- new request send callback -------")
-                                                                if (status == 1) {
-                                                                    res.json({
-                                                                        "status": "1",
-                                                                        "payload": result[0],
-                                                                        "message": "booking request send successfully"
-                                                                    })
-                                                                } else {
-                                                                    res.json({
-                                                                        "status": "2",
-                                                                        "payload": result[0],
-                                                                        "message": bookingInfo
-                                                                    })
-                                                                }
-
-                                                            })
-
-                                                        } else {
-                                                            helper.Dlog("Not Booking info get")
-                                                        }
-
-                                                    })
-
-                                            } else {
-                                                res.json(
-                                                    {
-                                                        "status": "0",
-                                                        "message": "booking fail"
-                                                    }
-                                                )
-                                            }
-
-                                        }
-                                        )
-
-                                    } else {
-                                        res.json(
-                                            {
-                                                "status": "0",
-                                                "message": "booking fail"
-                                            }
-                                        )
-                                    }
-
-                                })
-
-
-                            } else {
-                                res.json(
-                                    {
-                                        "status": "0",
-                                        "message": "invalid service"
-                                    }
-                                )
-                            }
-
-
-                        } else {
-                            res.json(
-                                {
-                                    "status": "0",
-                                    "message": msg_all_ready_book
+                            const bookingId = bookingResult.recordset[0].booking_id;
+                
+                            return sql
+                              .connect(config)
+                              .then((pool) => {
+                                return pool
+                                  .request()
+                                  .input('booking_id', sql.Int, bookingId)
+                                  .input('booking_status', sql.Int, bs_pending)
+                                  .query(
+                                    `SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, (CASE WHEN ud.image != '' THEN CONCAT( '${helper.ImagePath()}', ud.image ) ELSE '' END) AS image, ppd.amt, ppd.driver_amt, ppd.payment_type 
+                                    FROM booking_detail AS bd 
+                                    INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id 
+                                    INNER JOIN price_detail AS pd ON pd.price_id = bd.price_id 
+                                    INNER JOIN payment_detail AS ppd ON ppd.payment_id = bd.payment_id 
+                                    INNER JOIN service_detail AS sd ON bd.service_id = sd.service_id 
+                                    WHERE bd.booking_id = @booking_id AND bd.booking_status = @booking_status;`
+                                  );
+                              });
+                          })
+                          .then((finalResult) => {
+                            if (finalResult.recordset.length > 0) {
+                              driverNewRequestSend(finalResult.recordset[0], (status, bookingInfo) => {
+                                if (status == 1) {
+                                  res.json({
+                                    status: '1',
+                                    payload: finalResult.recordset[0],
+                                    message: 'booking request send successfully',
+                                  });
+                                } else {
+                                  res.json({
+                                    status: '2',
+                                    payload: finalResult.recordset[0],
+                                    message: bookingInfo,
+                                  });
                                 }
-                            )
-                        }
-                    })
-
+                              });
+                            } else {
+                              res.json({ status: '0', message: 'Booking info not found' });
+                            }
+                          })
+                          .catch((err) => {
+                            helper.ThrowHtmlError(err, res);
+                          });
+                      } else {
+                        res.json({ status: '0', message: 'invalid service' });
+                      }
+                    } else {
+                      res.json({ status: '0', message: msg_all_ready_book });
+                    }
+                  })
+                  .catch((err) => {
+                    helper.ThrowHtmlError(err, res);
+                  });  
 
             })
         })
@@ -265,27 +272,31 @@ module.exports.controller = (app, io, socket_list) => {
                 }
                 // Tracking OP
 
-                db.query("UPDATE `user_detail` SET `lati` = ? , `longi` = ? WHERE `user_id` = ? AND `user_type` = ? ", [
-                    reqObj.latitude, reqObj.longitude, uObj.user_id, ut_driver
-                ], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
-
-                    if (result.affectedRows > 0) {
+                sql.connect(config).then((pool) => {
+                    return pool
+                        .request()
+                        .input('latitude', sql.Decimal(18, 9), reqObj.latitude)
+                        .input('longitude', sql.Decimal(18, 9), reqObj.longitude)
+                        .input('user_id', sql.Int, uObj.user_id)
+                        .input('user_type', sql.Int, ut_driver)
+                        .query("UPDATE user_detail SET lati = @latitude, longi = @longitude WHERE user_id = @user_id AND user_type = @user_type");
+                })
+                .then((result) => {
+                    if (result.rowsAffected > 0) {
                         res.json({
                             'status': "1",
                             "message": msg_success
-                        })
+                        });
                     } else {
                         res.json({
                             'status': "0",
                             "message": msg_fail
-                        })
+                        });
                     }
                 })
-
+                .catch((err) => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
         })
     })
@@ -296,108 +307,147 @@ module.exports.controller = (app, io, socket_list) => {
 
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["booking_id", "request_token"], () => {
-                db.query("SELECT `booking_status` FROM `booking_detail` WHERE `booking_id` = ? ", [reqObj.booking_id], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
-
-                    if (result.length > 0) {
-
-                        if (requestPendingArray[reqObj.request_token] == undefined || requestPendingArray[reqObj.request_token] == null) {
+                sql.connect(config).then((pool) => {
+                    return pool
+                        .request()
+                        .input('booking_id', sql.Int, reqObj.booking_id)
+                        .query("SELECT booking_status FROM booking_detail WHERE booking_id = @booking_id");
+                })
+                .then((result) => {
+                    if (result.recordset.length > 0) {
+                
+                        if (requestPendingArray[reqObj.request_token] === undefined || requestPendingArray[reqObj.request_token] === null) {
                             res.json({
                                 "success": "2",
                                 "message": "request token invalid"
-                            })
-                        } else {
-                            if (result[0].booking_status == bs_cancel) {
-                                res.json(
-                                    {
-                                        "success": "2",
-                                        "message": "ride user cancel request"
-                                    }
-                                )
-                            } else {
-                                var otpCode = Math.floor(1000 + Math.random() * 9000);
-
-                                db.query("UPDATE `booking_detail` AS `bd` " +
-                                    "INNER JOIN  `user_detail` AS `ud` ON `bd`.`driver_id` = `ud`.`user_id` " +
-                                    "INNER JOIN `user_detail` AS `rud` ON `bd`.`user_id` = `rud`.`user_id` " +
-                                    "INNER JOIN `service_detail` AS `sd` ON `bd`.`service_id` = `sd`.`service_id` " +
-                                    "SET `bd`.`booking_status` = '" + bs_go_user + "', `ud`.`status` = 2, `rud`.`status` = 2, `bd`.`accpet_time` = NOW(), `bd`.`start_time` = NOW(), `bd`.`user_car_id` = `ud`.`car_id`, `ud`.`is_request_send` = ? , `bd`.`otp_code` = ? WHERE `bd`.`booking_id` = ? AND `bd`.`driver_id` = ? ", [2, otpCode, reqObj.booking_id, uObj.user_id
-                                ], (err, result) => {
-                                    if (err) {
-                                        helper.ThrowHtmlError(err, res);
-                                        return
-                                    }
-
-                                    if (result.affectedRows > 0) {
-                                        removeRequestTokenPendingArr[reqObj.request_token];
-
-                                        helper.Dlog("--------------------- ride accepted successfully --------------")
-                                        res.json({
-                                            "status": "1",
-                                            "message": "ride accepted successfully"
-                                        })
-
-                                        db.query("SELECT `ud`.`push_token`, `ud`.`user_id`, `bd`.`pickup_date`  FROM `booking_detail` AS `bd`" +
-                                            "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`user_id` " +
-                                            "WHERE `bd`.`booking_id` = ?", [reqObj.booking_id], (err, result) => {
-                                                if (err) {
-                                                    helper.ThrowHtmlError(err);
-                                                    return
-                                                }
-
-                                                if (result.length > 0) {
-                                                    helper.Dlog(result);
-                                                    helper.Dlog("--------------------- ride accepted successfully " + result[0].user_id + "--------------")
-                                                    var userSocket = controllerSocketList['us_' + result[0].user_id];
-                                                    if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
-
-                                                        var response = {
-                                                            "status": "1",
-                                                            "payload": {
-                                                                "booking_id": parseInt(reqObj.booking_id),
-                                                                "booking_status": bs_accept,
-                                                                "ride_cancel": userRideCancelTime
-                                                            },
-                                                            "message": "driver accepted your request"
-                                                        }
-
-                                                        controllerIO.sockets.sockets.get(userSocket.socket_id).emit("user_request_accept", response)
-                                                    }
-
-                                                    oneSignalPushFire('1', [result[0].push_token], nt_t_2_accpet_request, "driver ride are accepted", {
-                                                        "booking_id": reqObj.booking_id,
-                                                        "booking_status": bs_accept.toString(),
-                                                        "ride_cancel": userRideCancelTime.toString(),
-                                                        "notification_id": nt_id_2_accpet_request
-                                                    })
-
-                                                }
-                                            }
-                                        )
-
-                                    } else {
-                                        res.json(
-                                            {
-                                                "success": "0",
-                                                "message": msg_fail
-                                            }
-                                        )
-                                    }
-                                })
-                            }
+                            });
+                            return;
                         }
-
-
+                
+                        if (result.recordset[0].booking_status === bs_cancel) {
+                            res.json({
+                                "success": "2",
+                                "message": "ride user cancel request"
+                            });
+                            return;
+                        } else {
+                            const otpCode = Math.floor(1000 + Math.random() * 9000);
+                
+                            // Second query: Updating booking details
+                            sql.connect(config).then((pool) => {
+                                return pool
+                                    .request()
+                                    .input('otp_code', sql.Int, otpCode)
+                                    .input('booking_id', sql.Int, reqObj.booking_id)
+                                    .input('booking_status', sql.Int, 1)
+                                    .input('driver_id', sql.Int, uObj.user_id)
+                                    .input('is_request_send', sql.Int, 2)
+                                    .query(`
+                                        UPDATE bd
+                                        SET 
+                                            bd.booking_status = @booking_status, 
+                                            bd.accpet_time = GETDATE(), 
+                                            bd.start_time = GETDATE(), 
+                                            bd.user_car_id = ud.car_id, 
+                                            bd.otp_code = @otp_code
+                                        FROM booking_detail AS bd
+                                        INNER JOIN user_detail AS ud ON bd.driver_id = ud.user_id
+                                        INNER JOIN user_detail AS rud ON bd.user_id = rud.user_id
+                                        INNER JOIN service_detail AS sd ON bd.service_id = sd.service_id
+                                        WHERE bd.booking_id = @booking_id AND bd.driver_id = @driver_id;
+                                        UPDATE ud
+                                        SET 
+                                            ud.status = 2, 
+                                            ud.is_request_send = @is_request_send
+                                        FROM user_detail AS ud
+                                        INNER JOIN booking_detail AS bd ON bd.driver_id = ud.user_id
+                                        INNER JOIN service_detail AS sd ON bd.service_id = sd.service_id
+                                        WHERE bd.booking_id = @booking_id AND bd.driver_id = @driver_id;
+                                        UPDATE rud
+                                        SET 
+                                            rud.status = 2
+                                        FROM user_detail AS rud
+                                        INNER JOIN booking_detail AS bd ON bd.user_id = rud.user_id
+                                        INNER JOIN service_detail AS sd ON bd.service_id = sd.service_id
+                                        WHERE bd.booking_id = @booking_id AND bd.driver_id = @driver_id;
+                                    `);
+                            })
+                            .then((result) => {
+                                if (result.rowsAffected[0] > 0 && result.rowsAffected[1] > 0 && result.rowsAffected[2] > 0) {
+                                    removeRequestTokenPendingArr[reqObj.request_token];
+                                    helper.Dlog("--------------------- ride accepted successfully --------------");
+                
+                                    res.json({
+                                        "status": "1",
+                                        "message": "ride accepted successfully"
+                                    });
+                
+                                    // Third query: Fetching user details
+                                    sql.connect(config).then((pool) => {
+                                        return pool
+                                            .request()
+                                            .input('booking_id', sql.Int, reqObj.booking_id)
+                                            .query(`
+                                                SELECT ud.push_token, ud.user_id, bd.pickup_date 
+                                                FROM booking_detail AS bd
+                                                INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id
+                                                WHERE bd.booking_id = @booking_id
+                                            `);
+                                    })
+                                    .then((result) => {
+                                        if (result.recordset.length > 0) {
+                                            helper.Dlog(result.recordset);
+                                            helper.Dlog("--------------------- ride accepted successfully " + result.recordset[0].user_id + "--------------");
+                
+                                            const userSocket = controllerSocketList['us_' + result.recordset[0].user_id];
+                                            if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
+                                                const response = {
+                                                    "status": "1",
+                                                    "payload": {
+                                                        "booking_id": parseInt(reqObj.booking_id),
+                                                        "booking_status": bs_accept,
+                                                        "ride_cancel": userRideCancelTime
+                                                    },
+                                                    "message": "driver accepted your request"
+                                                };
+                
+                                                controllerIO.sockets.sockets.get(userSocket.socket_id).emit("user_request_accept", response);
+                                            }
+                
+                                            // Push notification
+                                            oneSignalPushFire('1', [result.recordset[0].push_token], nt_t_2_accpet_request, "driver ride accepted", {
+                                                "booking_id": reqObj.booking_id,
+                                                "booking_status": bs_accept.toString(),
+                                                "ride_cancel": userRideCancelTime.toString(),
+                                                "notification_id": nt_id_2_accpet_request
+                                            });
+                                        }
+                                    })
+                                    .catch((err) => {
+                                        helper.ThrowHtmlError(err, res);
+                                    });
+                
+                                } else {
+                                    res.json({
+                                        "success": "0",
+                                        "message": msg_fail
+                                    });
+                                }
+                            })
+                            .catch((err) => {
+                                helper.ThrowHtmlError(err, res);
+                            });
+                        }
                     } else {
                         res.json({
                             "success": "0",
                             "message": msg_fail
-                        })
+                        });
                     }
                 })
+                .catch((err) => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
         }, ut_driver)
 
@@ -415,30 +465,41 @@ module.exports.controller = (app, io, socket_list) => {
                         "message": "request token invalid"
                     })
                 } else {
-                    db.query("UPDATE `user_detail` SET `is_request_send` = ? WHERE `user_id` = ? ", [0, uObj.user_id], (err, result) => {
-                        if (err) {
-                            helper.ThrowHtmlError(err, res);
-                            return
-                        }
-
-                        if (result.affectedRows > 0) {
-                            removeRequestTokenPendingArr(
-                                reqObj.request_token
-                            );
+                    sql.connect(config).then((pool) => {
+                        // Update query to reset the 'is_request_send' field
+                        return pool
+                            .request()
+                            .input('is_request_send', sql.Int, 0)
+                            .input('user_id', sql.Int, uObj.user_id)
+                            .query(`
+                                UPDATE user_detail
+                                SET is_request_send = @is_request_send
+                                WHERE user_id = @user_id
+                            `);
+                    })
+                    .then((result) => {
+                        // Check if the query affected any rows
+                        if (result.rowsAffected > 0) {
+                            removeRequestTokenPendingArr(reqObj.request_token);
                             res.json({
                                 "status": "1",
-                                "message": "ride request decline successfully"
-                            })
-
+                                "message": "Ride request declined successfully"
+                            });
+                    
+                            // Call the function to handle sending a new request based on booking ID
                             driverNewRequestSendByBookingID(reqObj.booking_id);
-
+                    
                         } else {
                             res.json({
                                 "status": "0",
                                 "message": msg_fail
-                            })
+                            });
                         }
                     })
+                    .catch((err) => {
+                        // Handle any errors from the query
+                        helper.ThrowHtmlError(err, res);
+                    });
                 }
             })
         }, ut_driver)
@@ -493,47 +554,40 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["booking_id"], () => {
-                bookingInformationDetail(reqObj.booking_id, uObj.user_type, (status, result) => {
-                    if (status == 0) {
-                        //User Booking Detail Not Request Ride Only
-
-                        if (uObj.user_type == ut_user) {
-                            bookingInformationDetail(reqObj.booking_id, "2", (status, result) => {
-                                if (status == 0) {
-                                    res.json({ "status": "0", result })
-                                } else {
-                                    res.json(
-                                        {
-                                            'status': "1",
-                                            "payload": result[0]
-                                        }
-                                    )
-                                }
+                bookingInformationDetail(reqObj.booking_id, uObj.user_type).then((result) => {
+                    if (uObj.user_type === ut_user) {
+                        return bookingInformationDetail(reqObj.booking_id, "2").then((result) => {
+                            res.json({
+                                status: "1",
+                                payload: result[0],
                             });
-                        } else {
-                            res.json({ "status": "0", result })
-                        }
+                        })
+                        .catch((error) => {
+                            res.json({
+                                status: "0",
+                                result: error,
+                            });
+                        });
                     } else {
-
-                        if (result[0].booking_status == bs_complete) {
-
-                            res.json(
-                                {
-                                    'status': "1",
-                                    "payload": result[0]
-                                }
-                            )
-                        } else {
-                            res.json(
-                                {
-                                    'status': "1",
-                                    "payload": result[0]
-                                }
-                            )
-                        }
-
+                        res.json({
+                            status: "0",
+                            result,
+                        });
                     }
-                })
+            })
+            .catch((error) => {
+                if (error[0]?.booking_status === bs_complete) {
+                    res.json({
+                        status: "1",
+                        payload: error[0],
+                    });
+                } else {
+                    res.json({
+                        status: "1",
+                        payload: error[0],
+                    });
+                }
+            });
             })
         })
     })
@@ -544,83 +598,109 @@ module.exports.controller = (app, io, socket_list) => {
 
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["booking_id"], () => {
-                db.query("UPDATE `booking_detail` SET `booking_status` = ?, `start_time` = NOW() WHERE `booking_id` = ? AND `driver_id` = ? AND `booking_status` < ? ", [bs_wait_user, reqObj.booking_id, uObj.user_id, bs_wait_user], (err, result) => {
-
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return;
-                    }
-
-                    if (result.affectedRows > 0) {
-
-                        db.query("SELECT  `bd`.*, `ud`.`push_token` FROM `booking_detail` AS `bd` " +
-                            "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`user_id` " +
-                            "WHERE `bd`.`booking_id` = ? ", [reqObj.booking_id], (err, result) => {
-                                if (err) {
-                                    helper.ThrowHtmlError(err, res);
-                                    return;
-                                }
-
-                                if (result.length > 0) {
-                                    helper.timeDuration(result[0].pickup_date, helper.serverYYYYMMDDHHmmss(), (totalMin, _) => {
-
-                                        var waitingTime = userWaitingTime;
-
+                sql.connect(config).then(pool => {
+                    return pool
+                        .request()
+                        .input('booking_status', sql.Int, bs_wait_user)
+                        .input('booking_id', sql.Int, reqObj.booking_id)
+                        .input('driver_id', sql.Int, uObj.user_id)
+                        .input('status_limit', sql.Int, bs_wait_user)
+                        .query(`
+                            UPDATE booking_detail 
+                            SET booking_status = @booking_status, start_time = GETDATE() 
+                            WHERE booking_id = @booking_id 
+                            AND driver_id = @driver_id 
+                            AND booking_status < @status_limit
+                        `);
+                })
+                .then(result => {
+                    if (result.rowsAffected > 0) {
+                        // Query the booking details and user push token
+                        return sql.connect(config)
+                            .then(pool => {
+                                return pool
+                                    .request()
+                                    .input('booking_id', sql.Int, reqObj.booking_id)
+                                    .query(`
+                                        SELECT bd.*, ud.push_token 
+                                        FROM booking_detail AS bd 
+                                        INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id 
+                                        WHERE bd.booking_id = @booking_id
+                                    `);
+                            })
+                            .then(result => {
+                                if (result.recordset.length > 0) {
+                                    const bookingDetails = result.recordset[0];
+                                    
+                                    helper.timeDuration(bookingDetails.pickup_date, helper.serverYYYYMMDDHHmmss(), (totalMin, _) => {
+                                        let waitingTime = userWaitingTime;
                                         if (totalMin > 0) {
                                             waitingTime += totalMin * 60;
                                         }
-
+            
+                                        // Handle waiting time
                                         driverUserWaitingTimeOver(reqObj.booking_id, waitingTime);
-
-                                        var userSocket = controllerSocketList['us_' + result[0].user_id];
+            
+                                        // Emit a socket event to notify the user
+                                        const userSocket = controllerSocketList['us_' + bookingDetails.user_id];
                                         if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
-                                            var responseObj = {
-                                                "status": "1",
-                                                "payload": {
-                                                    "booking_id": parseInt(reqObj.booking_id),
-                                                    "waiting": waitingTime,
-                                                    "booking_status": bs_wait_user
+                                            const responseObj = {
+                                                status: "1",
+                                                payload: {
+                                                    booking_id: parseInt(reqObj.booking_id),
+                                                    waiting: waitingTime,
+                                                    booking_status: bs_wait_user
                                                 },
-                                                "message": "driver waiting"
-                                            }
-
-                                            controllerIO.sockets.sockets.get(userSocket.socket_id).emit("driver_wait_user", responseObj)
-
-
+                                                message: "driver waiting"
+                                            };
+                                            controllerIO.sockets.sockets.get(userSocket.socket_id).emit("driver_wait_user", responseObj);
                                         }
-
-                                        oneSignalPushFire(1, [result[0].push_token], nt_t_3_driver_wait, "driver is waiting", {
-                                            "booking_id": reqObj.booking_id,
-                                            "waiting": waitingTime,
-                                            "booking_status": bs_wait_user.toString(),
-                                            "notification_id": nt_id_3_driver_wait
-                                        })
-
-                                        bookingInformationDetail(reqObj.booking_id, '2', (status, result) => {
-
-                                            if (status != 0) {
-                                                result[0].waiting = waitingTime;
+            
+                                        // Send push notification via OneSignal
+                                        oneSignalPushFire(1, [bookingDetails.push_token], nt_t_3_driver_wait, "driver is waiting", {
+                                            booking_id: reqObj.booking_id,
+                                            waiting: waitingTime,
+                                            booking_status: bs_wait_user.toString(),
+                                            notification_id: nt_id_3_driver_wait
+                                        });
+            
+                                        // Retrieve full booking information
+                                        bookingInformationDetail(reqObj.booking_id, '2')
+                                            .then(resultDetails => {
+                                                if (resultDetails.status !== 0) {
+                                                    resultDetails[0].waiting = waitingTime;
+                                                    res.json({
+                                                        status: "1",
+                                                        payload: resultDetails[0],
+                                                        message: "user notified"
+                                                    });
+                                                }
+                                            })
+                                            .catch(err => {
+                                                helper.Dlog(err, res);
                                                 res.json({
-                                                    "status": "1",
-                                                    "payload": result[0],
-                                                    "message": "user notified"
-                                                })
-                                            }
-
-                                        })
-
-                                    })
+                                                    status: "0",
+                                                    message: "Error retrieving booking details"
+                                                });
+                                            });
+                                    });
+                                } else {
+                                    res.json({
+                                        status: "0",
+                                        message: "No booking information found"
+                                    });
                                 }
-                            })
-
-
+                            });
                     } else {
                         res.json({
-                            "status": "0",
-                            "message": "user wait fail"
-                        })
+                            status: "0",
+                            message: "Failed to update user wait"
+                        });
                     }
                 })
+                .catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
         })
 
@@ -635,83 +715,103 @@ module.exports.controller = (app, io, socket_list) => {
             helper.CheckParameterValid(res, reqObj, ["booking_id", "pickup_latitude", "pickup_longitude", "otp_code"], () => {
 
                 var otp_code = Math.floor(1000 + Math.random() * 9000)
-                var sql = "UPDATE `booking_detail` AS `bd` " +
-                    "INNER JOIN `user_detail` AS `dd` ON `dd`.`user_id` = `bd`.`driver_id` " +
-                    "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`user_id` " +
-                    "INNER JOIN `service_detail` AS `sd` ON `bd`.`service_id` = `sd`.`service_id` " +
-                    "SET `bd`.`booking_status` = ?, `bd`.`pickup_lat` = ?, `bd`.`pickup_long` = ?, `bd`.`start_time` = NOW(), `dd`.`status` = 2, `ud`.`status` = 2, `bd`.`otp_code` = ? WHERE `bd`.`booking_id` = ? AND `bd`.`booking_status` < ? AND `bd`.`driver_id` = ? AND `bd`.`otp_code` = ?  "
-
-                db.query(sql,
-                    [
-                        bs_start, reqObj.pickup_latitude, reqObj.pickup_longitude, otp_code, reqObj.booking_id, bs_start, uObj.user_id, reqObj.otp_code
-                    ], (err, result) => {
-                        if (err) {
-                            helper.ThrowHtmlError(err, res);
-                            return;
-                        }
-
-                        if (result.affectedRows > 0) {
-                            removeDriverWaitUser(reqObj.booking_id);
-                            bookingInformationDetail(reqObj.booking_id, '2', (status, result) => {
-
-                                if (status != 0) {
-
-                                    res.json({
-                                        "status": "1",
-                                        "payload": result[0],
-                                        "message": "Ride stated successfully"
-                                    })
-                                }
-
-                            })
-
-                            db.query("SELECT  `bd`.*, `ud`.`push_token`, `pd`.`mini_km` FROM `booking_detail` AS `bd` " +
-                                "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`user_id` " +
-                                "INNER JOIN `price_detail` AS `pd` ON `bd`.`price_id` = `pd`.`price_id` " +
-
-                                "WHERE `bd`.`booking_id` = ? ", [reqObj.booking_id], (err, result) => {
-                                    if (err) {
-                                        helper.ThrowHtmlError(err, res);
-                                        return;
-                                    }
-
-                                    if (result.length > 0) {
-
-
-                                        var userSocket = controllerSocketList['us_' + result[0].user_id];
-                                        if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
-                                            var responseObj = {
-                                                "status": "1",
-                                                "payload": {
-                                                    "booking_id": parseInt(reqObj.booking_id),
-
-                                                    "booking_status": bs_start
-                                                },
-                                                "message": "driver started ride"
-                                            }
-
-                                            controllerIO.sockets.sockets.get(userSocket.socket_id).emit("ride_start", responseObj)
-
-
-                                        }
-
-                                        oneSignalPushFire(1, [result[0].push_token], nt_t_4_ride_start, "driver is waiting", {
-                                            "booking_id": reqObj.booking_id,
-
-                                            "booking_status": bs_start.toString(),
-                                            "notification_id": nt_id_4_ride_start
-                                        })
-                                    }
-                                })
-
-
-                        } else {
+                sql.connect(config).then(pool => {
+                    return pool
+                        .request()
+                        .input('booking_status', sql.Int, bs_start)
+                        .input('pickup_lat', sql.Float, reqObj.pickup_latitude)
+                        .input('pickup_long', sql.Float, reqObj.pickup_longitude)
+                        .input('otp_code', sql.Int, otp_code)
+                        .input('booking_id', sql.Int, reqObj.booking_id)
+                        .input('current_status', sql.Int, bs_start)
+                        .input('driver_id', sql.Int, uObj.user_id)
+                        .input('user_id', sql.Int, uObj.user_id)
+                        .input('old_otp_code', sql.Int, reqObj.otp_code)
+                        .query(`
+                            UPDATE bd
+                            SET bd.booking_status = @booking_status, 
+                                bd.pickup_lat = @pickup_lat, 
+                                bd.pickup_long = @pickup_long, 
+                                bd.start_time = GETDATE(), 
+                                bd.otp_code = @otp_code
+                            FROM booking_detail bd
+                            WHERE bd.booking_id = @booking_id
+                            AND bd.booking_status < @current_status
+                            AND bd.driver_id = @driver_id
+                            AND bd.otp_code = @old_otp_code;
+                            UPDATE dd
+                            SET dd.status = 2
+                            FROM user_detail dd
+                            INNER JOIN booking_detail bd ON dd.user_id = bd.driver_id
+                            WHERE bd.booking_id = @booking_id;
+                            UPDATE ud
+                            SET ud.status = 2
+                            FROM user_detail ud
+                            INNER JOIN booking_detail bd ON ud.user_id = bd.user_id
+                            WHERE bd.booking_id = @booking_id;
+                        `);
+                })
+                .then(result => {
+                    if (result.rowsAffected[0] > 0 && result.rowsAffected[1] > 0 && result.rowsAffected[2] > 0) {
+                        removeDriverWaitUser(reqObj.booking_id);
+                        bookingInformationDetail(reqObj.booking_id, '2').then((result) => {
                             res.json({
-                                "status": "0",
-                                "message": "ride start fail"
-                            })
+                                status: "1",
+                                payload: result[0],
+                                message: "Ride started successfully",
+                            });
+                        })
+                        .catch((error) => {
+                            console.error('Error fetching booking details:', error);
+                            // Handle the error case if needed, e.g., sending a different response
+                        });
+    
+                
+                        return sql.connect(config).then(pool => {
+                            return pool
+                                .request()
+                                .input('booking_id', sql.Int, reqObj.booking_id)
+                                .query(`
+                                    SELECT bd.*, ud.push_token, pd.mini_km 
+                                    FROM booking_detail AS bd
+                                    INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id
+                                    INNER JOIN price_detail AS pd ON bd.price_id = pd.price_id
+                                    WHERE bd.booking_id = @booking_id
+                                `);
+                        });
+                    } else {
+                        res.json({
+                            "status": "0",
+                            "message": "Ride start failed"
+                        });
+                    }
+                })
+                .then(result2 => {
+                    if (result2.recordset.length > 0) {
+                        const userSocket = controllerSocketList['us_' + result2.recordset[0].user_id];
+                        if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
+                            const responseObj = {
+                                "status": "1",
+                                "payload": {
+                                    "booking_id": parseInt(reqObj.booking_id),
+                                    "booking_status": bs_start
+                                },
+                                "message": "Driver started ride"
+                            };
+                
+                            controllerIO.sockets.sockets.get(userSocket.socket_id).emit("ride_start", responseObj);
                         }
-                    })
+                
+                        oneSignalPushFire(1, [result2.recordset[0].push_token], nt_t_4_ride_start, "Driver is waiting", {
+                            "booking_id": reqObj.booking_id,
+                            "booking_status": bs_start.toString(),
+                            "notification_id": nt_id_4_ride_start
+                        });
+                    }
+                })
+                .catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
 
             })
         })
@@ -725,9 +825,10 @@ module.exports.controller = (app, io, socket_list) => {
 
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["booking_id", "drop_latitude", "drop_longitude", "toll_tax", "ride_location"], () => {
+                const rideLocations = reqObj.ride_location.replace(/,(\s*)]$/, ']')
                 var stopTime = helper.serverYYYYMMDDHHmmss()
                 var rideLocationString = "";
-                var rideLocationArr = JSON.parse(reqObj.ride_location);
+                var rideLocationArr = JSON.parse(rideLocations);
                 var totalKM = 0;
 
                 rideLocationArr.forEach((locationDetail, index) => {
@@ -739,131 +840,164 @@ module.exports.controller = (app, io, socket_list) => {
 
                 helper.Dlog("Total KM : " + totalKM);
 
-                db.query("SELECT * FROM `price_detail` AS `pd` " +
+                sql.connect(config).then(pool => {
+                    return pool
+                        .request()
+                        .input('booking_id', sql.Int, reqObj.booking_id)
+                        .query(`
+                            SELECT pd.*, bd.start_time, zl.*, bd.booking_id 
+                            FROM price_detail AS pd
+                            INNER JOIN booking_detail AS bd ON pd.price_id = bd.price_id
+                            INNER JOIN zone_list AS zl ON zl.zone_id = pd.zone_id
+                            WHERE bd.booking_id = @booking_id
+                        `);
+                })
+                .then(result => {
+                    if (result.recordset.length > 0) {
+                        const bookingDetail = result.recordset[0];
 
-                    "INNER JOIN `booking_detail` AS `bd` ON `pd`.`price_id` = `bd`.`price_id` " +
-                    "INNER JOIN `zone_list` AS `zl` ON `zl`.`zone_id` = `pd`.`zone_id` " +
-                    "WHERE `bd`.`booking_id` = ? ", [reqObj.booking_id], (err, result) => {
-                        if (err) {
-                            helper.ThrowHtmlError(err, res)
-                            return
-                        }
-
-                        if (result.length > 0) {
-
-                            helper.timeDuration(stopTime, helper.serverMySqlDate(result[0].start_time), (totalMin, durationString) => {
-
-                                if (result[0].mini_km > totalKM) {
-                                    totalKM = parseFloat(result[0].mini_km)
-                                }
-
-                                var amount = parseFloat(result[0].base_charge) + (totalKM * parseFloat(result[0].per_km_charge)) + (totalMin * parseFloat(result[0].per_min_charge)) + parseFloat(result[0].booking_charge);
-
-                                var driverAmount = '0';
-                                var rideCommission = '0';
-
-
-                                if (result[0].mini_fair >= amount) {
-                                    amount = parseFloat(result[0].mini_fair)
-                                }
-
-                                // 110% 1000
-                                var totalAmount = amount * 100 / (100 + parseInt(result[0].tax)) // 1000 * 100 / (100 + 10)
-
-
-                                //10 %
-                                taxAmount = (amount - totalAmount).toFixed(3); // 110% - 100% = 10% amount
-
-                                driverAmount = ((totalAmount - parseFloat(result[0].booking_charge)) * (1 - (rideCommissionVal / 100.0))).toFixed(2)
-
-                                totalAmount += parseFloat(reqObj.toll_tax)
-
-                                rideCommission = parseFloat(totalAmount - driverAmount).toFixed(2)
-
-
-                                db.query("UPDATE `booking_detail` AS `bd` " +
-                                    "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `bd`.`service_id` " +
-                                    "INNER JOIN `user_detail` AS `dd` ON `dd`.`user_id` = `bd`.`driver_id` " +
-                                    "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`user_id` " +
-                                    "INNER JOIN `payment_detail` AS `pd` ON `pd`.`payment_id` = `bd`.`payment_id` " +
-                                    "SET `bd`.`booking_status` = ?, `bd`.`toll_tax` = ?, `bd`.`total_distance` = ? , `bd`.`duration` = ?, `pd`.`amt` = ?, `bd`.`drop_lat` = ? , `bd`.`drop_long` = ?, `pd`.`status` = 1 , `pd`.`payment_date` = NOW(), `dd`.`status` = 1, `ud`.`status` = 1, `bd`.`stop_time` = NOW(), `bd`.`taxi_amout` = ?, `pd`.`driver_amt` = ? , `pd`.`tax_amt` = ?, `pd`.`ride_commission` = ?  " +
-                                    "WHERE `bd`.`booking_id` = ? AND `bd`.`driver_id` = ?  AND `bd`.`booking_status` < ? ", [
-                                    bs_complete, reqObj.toll_tax, totalKM, durationString, totalAmount, reqObj.drop_latitude, reqObj.drop_longitude, totalAmount, driverAmount, taxAmount, rideCommission, reqObj.booking_id, uObj.user_id, bs_complete
-                                ], (err, result) => {
-                                    if (err) {
-                                        helper.ThrowHtmlError(err, res)
-                                        return
-                                    }
-
-                                    if (result.affectedRows > 0) {
-
-                                        bookingInformationDetail(reqObj.booking_id, '2', (status, result) => {
-
-                                            helper.Dlog("-------------- ---------------");
-                                            helper.Dlog(result);
-
-                                            var userSocket = controllerSocketList['us_' + result[0].user_id];
+                        const date1 = helper.serverMySqlDate(bookingDetail.start_time);
+                        let date2 = bookingDetail.start_time;
+                        date2 = date2.setHours(date2.getHours() + 5);
+                
+                        helper.timeDuration(stopTime, date2, (totalMin, durationString) => {
+                            //let totalKM = reqObj.totalKM;
+                            if (bookingDetail.mini_km > totalKM) {
+                                totalKM = parseFloat(bookingDetail.mini_km);
+                            }
+                
+                            let amount = parseFloat(bookingDetail.base_charge) +
+                                (totalKM * parseFloat(bookingDetail.per_km_charge)) +
+                                (totalMin * parseFloat(bookingDetail.per_min_charge)) +
+                                parseFloat(bookingDetail.booking_charge);
+                
+                            if (bookingDetail.mini_fair >= amount) {
+                                amount = parseFloat(bookingDetail.mini_fair);
+                            }
+                
+                            const totalAmount = (amount * 100) / (100 + parseInt(bookingDetail.tax));
+                            const taxAmount = (amount - totalAmount).toFixed(3);
+                            const driverAmount = ((totalAmount - parseFloat(bookingDetail.booking_charge)) * (1 - (rideCommissionVal / 100.0))).toFixed(2);
+                            const finalTotalAmount = totalAmount + parseFloat(reqObj.toll_tax);
+                            const rideCommission = parseFloat(finalTotalAmount - driverAmount).toFixed(2);
+                
+                            // Single query to update all related tables using MERGE
+                            sql.connect(config).then(pool => {
+                                return pool
+                                    .request()
+                                    .input('booking_status', sql.Int, bs_complete)
+                                    .input('toll_tax', sql.Float, reqObj.toll_tax)
+                                    .input('total_distance', sql.Float, totalKM)
+                                    .input('duration', sql.VarChar, durationString)
+                                    .input('totalAmount', sql.Float, finalTotalAmount)
+                                    .input('drop_lat', sql.Float, reqObj.drop_latitude)
+                                    .input('drop_long', sql.Float, reqObj.drop_longitude)
+                                    .input('driverAmount', sql.Float, driverAmount)
+                                    .input('taxAmount', sql.Float, taxAmount)
+                                    .input('rideCommission', sql.Float, rideCommission)
+                                    .input('booking_id', sql.Int, reqObj.booking_id)
+                                    .input('driver_id', sql.Int, uObj.user_id)
+                                    .query(`
+                                        UPDATE bd
+                                        SET bd.booking_status = @booking_status, 
+                                            bd.toll_tax = @toll_tax, 
+                                            bd.total_distance = @total_distance, 
+                                            bd.duration = @duration, 
+                                            bd.drop_lat = @drop_lat, 
+                                            bd.drop_long = @drop_long, 
+                                            bd.stop_time = GETDATE(), 
+                                            bd.taxi_amout = @totalAmount
+                                        FROM booking_detail AS bd
+                                        WHERE bd.booking_id = @booking_id 
+                                          AND bd.driver_id = @driver_id 
+                                          AND bd.booking_status < @booking_status;
+                                        UPDATE pd
+                                        SET pd.amt = @totalAmount, 
+                                            pd.driver_amt = @driverAmount, 
+                                            pd.tax_amt = @taxAmount, 
+                                            pd.ride_commission = @rideCommission, 
+                                            pd.status = 1, 
+                                            pd.payment_date = GETDATE()
+                                        FROM payment_detail AS pd
+                                        WHERE pd.payment_id IN (
+                                            SELECT bd.payment_id FROM booking_detail bd WHERE bd.booking_id = @booking_id
+                                        );
+                                        UPDATE ud
+                                        SET ud.status = 1
+                                        FROM user_detail AS ud
+                                        WHERE ud.user_id IN (
+                                            SELECT bd.driver_id FROM booking_detail bd WHERE bd.booking_id = @booking_id
+                                            UNION
+                                            SELECT bd.user_id FROM booking_detail bd WHERE bd.booking_id = @booking_id
+                                        );
+                                    `);
+                            })
+                            .then((result) => {
+                                if (result.rowsAffected[0] > 0 && result.rowsAffected[1] > 0 && result.rowsAffected[2] > 0) {
+                                    // Send notification and emit socket events
+                                    bookingInformationDetail(reqObj.booking_id, '2').then((result) => {
+                                        if (result && result.length > 0) {
+                                            const userSocket = controllerSocketList['us_' + result[0].user_id];
+                                            
                                             if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
-                                                var responseObj = {
-                                                    "status": "1",
-                                                    "payload": {
-                                                        "booking_id": parseInt(reqObj.booking_id),
-                                                        "toll_tax": reqObj.toll_tax,
-                                                        "tax_amount": taxAmount,
-                                                        "amount": totalAmount,
-                                                        "duration": durationString,
-                                                        "total_distance": totalKM,
-                                                        "payment_type": result[0].payment_type,
-
-                                                        "booking_status": bs_complete
+                                                const responseObj = {
+                                                    status: "1",
+                                                    payload: {
+                                                        booking_id: parseInt(reqObj.booking_id),
+                                                        toll_tax: reqObj.toll_tax,
+                                                        tax_amount: taxAmount,
+                                                        amount: finalTotalAmount,
+                                                        duration: durationString,
+                                                        total_distance: totalKM,
+                                                        payment_type: result[0].payment_type,
+                                                        booking_status: bs_complete
                                                     },
-                                                    "message": "ride stop"
-                                                }
-
-                                                controllerIO.sockets.sockets.get(userSocket.socket_id).emit("ride_stop", responseObj)
-                                                helper.Dlog("-------------- ride_stop socket send ---------------");
-
+                                                    message: "ride stop"
+                                                };
+                                                
+                                                controllerIO.sockets.sockets.get(userSocket.socket_id).emit("ride_stop", responseObj);
                                             }
-
+                                
+                                            // Trigger OneSignal push notification
                                             oneSignalPushFire(1, [result[0].push_token], nt_t_5_ride_complete, "Ride Complete", {
-                                                "booking_id": reqObj.booking_id,
-                                                "toll_tax": reqObj.toll_tax,
-                                                "amount": totalAmount.toString(),
-                                                "duration": durationString,
-                                                "total_distance": totalKM.toString(),
-                                                "payment_type": result[0].payment_type.toString(),
-                                                "booking_status": bs_complete.toString(),
-                                                "notification_id": nt_id_5_ride_complete
-                                            })
-
+                                                booking_id: reqObj.booking_id,
+                                                toll_tax: reqObj.toll_tax,
+                                                amount: finalTotalAmount.toString(),
+                                                duration: durationString,
+                                                total_distance: totalKM.toString(),
+                                                payment_type: result[0].payment_type.toString(),
+                                                booking_status: bs_complete.toString(),
+                                                notification_id: nt_id_5_ride_complete
+                                            });
+                                
+                                            // Send the response
                                             res.json({
-                                                "status": "1",
-                                                "payload": result[0],
-                                                "message": "Ride Complete Successfully"
-                                            })
-
-                                        })
-
-                                    } else {
-                                        res.json({
-                                            "status": "0",
-                                            "message": msg_fail
-                                        })
-                                    }
-
-                                })
-
-
+                                                status: "1",
+                                                payload: result[0],
+                                                message: "Ride Complete Successfully"
+                                            });
+                                        }
+                                    })
+                                    .catch((error) => {
+                                        console.error('Error fetching booking details:', error);
+                                        // Handle error response if necessary
+                                    });
+                                }
                             })
-
-                        } else {
-                            res.json({
-                                "status": "0",
-                                "message": "ride stop fail"
-                            })
-                        }
-                    })
-
+                            .catch(err => {
+                                helper.ThrowHtmlError(err, res);
+                            });
+                        });
+                    } else {
+                        res.json({
+                            status: "0",
+                            message: "Ride stop failed"
+                        });
+                    }
+                })
+                .catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
         })
     })
@@ -873,50 +1007,62 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (uObj) => {
-            var userCol = "`user_id`"
+            var userCol = "user_id"
             if (uObj.user_type == ut_driver) {
-                userCol = "`driver_id`"
+                userCol = "driver_id"
             }
-            db.query("SELECT  `bd`.`booking_id`, `bd`.`booking_status`, `bd`.`user_id`, `bd`.`driver_id` FROM `booking_detail` AS `bd` WHERE `bd`.`booking_status` < ? AND `bd`.`booking_status` > ? AND " + userCol + " = ? LIMIT 1", [bs_complete, bs_pending, uObj.user_id], (err, result) => {
-
-                if (err) {
-                    helper.Dlog(err, res);
-                    return
-                }
-
-                if (result.length > 0) {
-
-                    bookingInformationDetail(result[0].booking_id, uObj.user_type, (status, result) => {
-
-                        helper.Dlog("---------- Home ------------")
-                        helper.Dlog(result);
-                        if (status != 0) {
-
-                            res.json(
-                                {
+            
+            sql.connect(config).then(pool => {
+                return pool
+                    .request()
+                    .input('bs_complete', sql.Int, bs_complete)
+                    .input('bs_pending', sql.Int, bs_pending)
+                    .input('user_id', sql.Int, uObj.user_id)
+                    .query(`
+                        SELECT TOP 1 
+                            bd.booking_id, 
+                            bd.booking_status, 
+                            bd.user_id, 
+                            bd.driver_id 
+                        FROM booking_detail AS bd 
+                        WHERE bd.booking_status < @bs_complete 
+                          AND bd.booking_status > @bs_pending 
+                          AND ${userCol} = @user_id
+                    `);
+            })
+            .then(result => {
+                if (result.recordset.length > 0) {
+                    const bookingId = result.recordset[0].booking_id;
+ 
+                    bookingInformationDetail(bookingId, uObj.user_type)
+                        .then(resultDetails => {
+                            helper.Dlog("---------- Home ------------");
+                            helper.Dlog(resultDetails);
+        
+                            if (resultDetails.status !== 0) {
+                                res.json({
                                     "status": "1",
                                     "payload": {
-                                        "running": result[0]
+                                        "running": resultDetails[0]
                                     }
-                                }
-                            )
-                        }
-                    })
-
-
-                } else {
-
-                    res.json(
-                        {
-                            "status": "1",
-                            "payload": {
-                                "running": {}
+                                });
                             }
+                        })
+                        .catch(err => {
+                            helper.Dlog(err, res);
+                        });
+                } else {
+                    res.json({
+                        "status": "1",
+                        "payload": {
+                            "running": {}
                         }
-                    )
+                    });
                 }
-
             })
+            .catch(err => {
+                helper.Dlog(err, res);
+            });    
 
         })
     })
@@ -926,40 +1072,100 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (uObj) => {
-            db.query(
-                "SELECT `bd`.`booking_id`, `bd`.`pickup_address`, `bd`.`drop_address`, `bd`.`pickup_date`, `bd`.`accpet_time`, `bd`.`start_time`, `bd`.`stop_time`, `bd`.`total_distance`, `bd`.`duration`, `bd`.`toll_tax`, `bd`.`tip_amount`, `bd`.`booking_status`, `sd`.`service_name`, (CASE WHEN `sd`.`icon` != ''  THEN CONCAT( '" + helper.ImagePath() + "' ,`sd`.`icon`  ) ELSE '' END) AS `icon`, `sd`.`color`, `ppd`.`payment_type`, (CASE WHEN `ppd`.`amt` > 0 AND `bd`.`booking_status` = ? THEN `ppd`.`amt` WHEN `ppd`.`amt` > 0 AND `bd`.`booking_status` = ? THEN 0 WHEN `ppd`.`amt` <= 0 THEN 0 ELSE 0 END) AS `amount`, (CASE WHEN `bd`.`booking_status` = 5 THEN `ppd`.`driver_amt` ELSE 0 END ) AS `driver_amt`, (CASE WHEN `bd`.`status` = 5 THEN `ppd`.`ride_commission` ELSE 0 END ) AS `ride_commission`  FROM `booking_detail` AS `bd` " +
-                "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `bd`.`service_id` " +
-                "INNER JOIN `price_detail` AS `pd` ON `pd`.`price_id` = `bd`.`price_id` " +
-                "INNER JOIN `payment_detail` AS `ppd` ON `ppd`.`payment_id` = `bd`.`payment_id` " +
-                "WHERE `bd`.`driver_id` = ? AND (`bd`.`booking_status` BETWEEN ? AND ? ) AND `bd`.`status` = ? ORDER BY `bd`.`booking_id` DESC",
-                [bs_complete, bs_cancel, uObj.user_id, bs_accept, bs_cancel, '1'], (err, result) => {
+            const query = `
+                        SELECT 
+                            [bd].[booking_id], 
+                            [bd].[pickup_address], 
+                            [bd].[drop_address], 
+                            [bd].[pickup_date], 
+                            [bd].[accpet_time], 
+                            [bd].[start_time], 
+                            [bd].[stop_time], 
+                            [bd].[total_distance], 
+                            [bd].[duration], 
+                            [bd].[toll_tax], 
+                            [bd].[tip_amount], 
+                            [bd].[booking_status], 
+                            [sd].[service_name], 
+                            (CASE 
+                                WHEN [sd].[icon] != '' 
+                                THEN CONCAT('${helper.ImagePath()}', [sd].[icon]) 
+                                ELSE '' 
+                            END) AS [icon], 
+                            [sd].[color], 
+                            [ppd].[payment_type], 
+                            (CASE 
+                                WHEN CAST([ppd].[amt] AS FLOAT) > 0 AND [bd].[booking_status] = @bs_complete THEN CAST([ppd].[amt] AS FLOAT)
+                                WHEN CAST([ppd].[amt] AS FLOAT) > 0 AND [bd].[booking_status] = @bs_cancel THEN 0
+                                WHEN CAST([ppd].[amt] AS FLOAT) <= 0 THEN 0
+                                ELSE 0 
+                            END) AS [amount], 
+                            (CASE 
+                                WHEN [bd].[booking_status] = 5 THEN CAST([ppd].[driver_amt] AS FLOAT)
+                                ELSE 0 
+                            END) AS [driver_amt], 
+                            (CASE 
+                                WHEN [bd].[status] = 5 THEN CAST([ppd].[ride_commission] AS FLOAT)
+                                ELSE 0 
+                            END) AS [ride_commission]
+                        FROM [booking_detail] AS [bd]
+                        INNER JOIN [service_detail] AS [sd] 
+                            ON [sd].[service_id] = [bd].[service_id] 
+                        INNER JOIN [price_detail] AS [pd] 
+                            ON [pd].[price_id] = [bd].[price_id] 
+                        INNER JOIN [payment_detail] AS [ppd] 
+                            ON [ppd].[payment_id] = [bd].[payment_id] 
+                        WHERE [bd].[driver_id] = @user_id 
+                            AND ([bd].[booking_status] BETWEEN @bs_accept AND @bs_cancel) 
+                            AND [bd].[status] = @status 
+                        ORDER BY [bd].[booking_id] DESC
+                    `;
 
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    } else {
-                        var rTotalAmount = 0;
+                    // Prepare parameters
+                    const params = {
+                        bs_complete: bs_complete,
+                        bs_cancel: bs_cancel,
+                        user_id: uObj.user_id,
+                        bs_accept: bs_accept,
+                        status: '1'
+                    };
 
-                        var totalAmount = 0;
+                    sql.connect(config, err => {
+                        if (err) {
+                            helper.ThrowHtmlError(err, res);
+                            return;
+                        }
 
-                        result.forEach((bookingObj, index) => {
-                            rTotalAmount += parseFloat(bookingObj.amount);
-                            totalAmount += parseFloat(bookingObj.driver_amt);
-                        })
+                        const request = new sql.Request();
+                        request.input('bs_complete', sql.Int, params.bs_complete);
+                        request.input('bs_cancel', sql.Int, params.bs_cancel);
+                        request.input('user_id', sql.Int, params.user_id);
+                        request.input('bs_accept', sql.Int, params.bs_accept);
+                        request.input('status', sql.VarChar, params.status);
 
-                        res.json({
-                            'status': '1',
-                            "payload": {
-                                "ride_list": result,
-                                "driver_total": totalAmount,
-                                "total": rTotalAmount
+                        request.query(query, (err, result) => {
+                            if (err) {
+                                helper.ThrowHtmlError(err, res);
+                            } else {
+                                let rTotalAmount = 0.0;
+                                let totalAmount = 0.0;
+
+                                result.recordset.forEach(bookingObj => {
+                                    rTotalAmount += parseFloat(bookingObj.amount);
+                                    totalAmount += parseFloat(bookingObj.driver_amt);
+                                });
+
+                                res.json({
+                                    status: '1',
+                                    payload: {
+                                        ride_list: result.recordset,
+                                        driver_total: totalAmount,
+                                        total: rTotalAmount
+                                    }
+                                });
                             }
-                        })
-
-                    }
-                }
-
-            )
+                        });
+                    });
         }, ut_driver)
 
     })
@@ -969,28 +1175,63 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (uObj) => {
-            db.query(
-                "SELECT `bd`.`booking_id`, `bd`.`pickup_address`, `bd`.`drop_address`, `bd`.`pickup_date`, `bd`.`accpet_time`, `bd`.`start_time`, `bd`.`stop_time`, `bd`.`est_total_distance`, `bd`.`est_duration`, `bd`.`total_distance`, `bd`.`duration`, `bd`.`booking_status`, `sd`.`service_name`, (CASE WHEN `sd`.`icon` != ''  THEN CONCAT( '" + helper.ImagePath() + "' ,`sd`.`icon`  ) ELSE '' END) AS `icon`, `sd`.`color` FROM `booking_detail` AS `bd` " +
-                "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `bd`.`service_id` " +
-                "WHERE `bd`.`user_id` = ? AND `bd`.`status` = ? ORDER BY `bd`.`booking_id` DESC",
-                [uObj.user_id, '1'], (err, result) => {
 
+                const query = `
+                SELECT 
+                    [bd].[booking_id], 
+                    [bd].[pickup_address], 
+                    [bd].[drop_address], 
+                    [bd].[pickup_date], 
+                    [bd].[accpet_time], 
+                    [bd].[start_time], 
+                    [bd].[stop_time], 
+                    [bd].[est_total_distance], 
+                    [bd].[est_duration], 
+                    [bd].[total_distance], 
+                    [bd].[duration], 
+                    [bd].[booking_status], 
+                    [sd].[service_name], 
+                    (CASE 
+                        WHEN [sd].[icon] != '' 
+                        THEN CONCAT('${helper.ImagePath()}', [sd].[icon]) 
+                        ELSE '' 
+                    END) AS [icon], 
+                    [sd].[color] 
+                FROM [booking_detail] AS [bd]
+                INNER JOIN [service_detail] AS [sd] 
+                    ON [sd].[service_id] = [bd].[service_id] 
+                WHERE [bd].[user_id] = @user_id 
+                    AND [bd].[status] = @status 
+                ORDER BY [bd].[booking_id] DESC
+            `;
+
+            // Prepare parameters
+            const params = {
+                user_id: uObj.user_id,
+                status: '1'
+            };
+
+            sql.connect(config, err => {
+                if (err) {
+                    helper.ThrowHtmlError(err, res);
+                    return;
+                }
+            
+                const request = new sql.Request();
+                request.input('user_id', sql.Int, params.user_id);  // Make sure user_id type matches
+                request.input('status', sql.VarChar, params.status);
+            
+                request.query(query, (err, result) => {
                     if (err) {
                         helper.ThrowHtmlError(err, res);
-                        return
                     } else {
-
-
                         res.json({
-                            'status': '1',
-                            "payload": result,
-
-                        })
-
+                            status: '1',
+                            payload: result.recordset
+                        });
                     }
-                }
-
-            )
+                });
+            });
         }, ut_user)
 
     })
@@ -1003,30 +1244,37 @@ module.exports.controller = (app, io, socket_list) => {
             helper.CheckParameterValid(res, reqObj, ["booking_id", "rating", "comment"], () => {
                 //User calling this api then save driver rating
                 //Driver Calling this api then save user rating
-                var sql = "UPDATE `booking_detail` SET `driver_rating` = ?, `driver_comment` = ? WHERE `booking_id` = ? AND `user_id` = ? AND `booking_status`  = ? ";
+
+                let sqlQuery = "UPDATE booking_detail SET driver_rating = @rating, driver_comment = @comment WHERE booking_id = @booking_id AND user_id = @user_id AND booking_status = @booking_status";
 
                 if (uObj.user_type == ut_driver) {
-                    sql = "UPDATE `booking_detail` SET `user_rating` = ?, `user_comment` = ? WHERE `booking_id` = ? AND `driver_id` = ? AND `booking_status`  = ? ";
+                    sqlQuery = "UPDATE booking_detail SET user_rating = @rating, user_comment = @comment WHERE booking_id = @booking_id AND driver_id = @user_id AND booking_status = @booking_status";
                 }
 
-                db.query(sql, [reqObj.rating, reqObj.comment, reqObj.booking_id, uObj.user_id, bs_complete], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
-
-                    if (result.affectedRows > 0) {
+                sql.connect(config).then(pool => {
+                    return pool.request()
+                        .input('rating', sql.Int, reqObj.rating)
+                        .input('comment', sql.NVarChar, reqObj.comment)
+                        .input('booking_id', sql.Int, reqObj.booking_id)
+                        .input('user_id', sql.Int, uObj.user_id)
+                        .input('booking_status', sql.Int, bs_complete)
+                        .query(sqlQuery);
+                }).then(result => {
+                    if (result.rowsAffected > 0) {
                         res.json({
                             'status': "1",
                             "message": "Thanks for rating"
-                        })
+                        });
                     } else {
                         res.json({
                             'status': "0",
                             "message": msg_fail
-                        })
+                        });
                     }
-                })
+                }).catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
+
             })
         })
     })
@@ -1037,96 +1285,75 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (uObj) => {
-            db.query(
-                "SELECT `bd`.`booking_id`, `bd`.`driver_id`, `bd`.`pickup_address`, `bd`.`start_time`, `pd`.`amt`, `pd`.`payment_type` FROM `booking_detail` AS `bd` " +
-                "INNER JOIN`payment_detail` AS`pd` ON`bd`.`payment_id` = `pd`.`payment_id` AND`bd`.`booking_status` = ? AND`bd`.`driver_id` = ? " +
-                "WHERE DATE(`bd`.`start_time`) = CURRENT_DATE()  ;" +
+            const sqlQuery = `
+                    SELECT bd.booking_id, bd.driver_id, bd.pickup_address, bd.start_time, pd.amt, pd.payment_type 
+                    FROM booking_detail AS bd
+                    INNER JOIN payment_detail AS pd ON bd.payment_id = pd.payment_id AND bd.booking_status = @booking_status AND bd.driver_id = @driver_id 
+                    WHERE CAST(bd.start_time AS DATE) = CAST(GETDATE() AS DATE);
 
-                "SELECT `bd`.`booking_id`, `bd`.`driver_id`, `bd`.`pickup_address`, `bd`.`start_time`, `pd`.`amt`, `pd`.`payment_type` FROM `booking_detail` AS `bd` "+
-                "INNER JOIN`payment_detail` AS`pd` ON`bd`.`payment_id` = `pd`.`payment_id` AND`bd`.`booking_status` = ? AND`bd`.`driver_id` = ? " + 
-                "WHERE DATE(`bd`.`start_time`) <= CURRENT_DATE() AND DATE(`bd`.`start_time`) >= DATE_ADD(NOW(), INTERVAL -7 DAY) ;" +
-                
-                "SELECT `dt`.`date`, " + 
-                "SUM( CASE WHEN `bd`.`booking_id` IS NOT NULL THEN 1 ELSE 0 END) AS `trips_count`, " +
-                "SUM( CASE WHEN `bd`.`booking_id` IS NOT NULL THEN `pd`.`amt` ELSE 0.0 END) AS `total_amt`, " +
-                "SUM( CASE WHEN `bd`.`booking_id` IS NOT NULL AND `pd`.`payment_type` = 1 THEN `pd`.`amt` ELSE 0.0 END) AS `cash_amt`, " +
-                "SUM( CASE WHEN `bd`.`booking_id` IS NOT NULL AND `pd`.`payment_type` = 2 THEN `pd`.`amt` ELSE 0.0 END) AS `online_amt` " +
-                "FROM `booking_detail` AS `bd` " + 
-                "INNER JOIN`payment_detail` AS`pd` ON`bd`.`payment_id` = `pd`.`payment_id` AND`bd`.`booking_status` = ? AND`bd`.`driver_id` = ?  " +
-                "AND DATE(`bd`.`start_time`) <= CURRENT_DATE() AND DATE(`bd`.`start_time`) >= DATE_ADD(NOW(), INTERVAL -7 DAY)  " +
-                "RIGHT JOIN ( " +
+                    SELECT bd.booking_id, bd.driver_id, bd.pickup_address, bd.start_time, pd.amt, pd.payment_type 
+                    FROM booking_detail AS bd
+                    INNER JOIN payment_detail AS pd ON bd.payment_id = pd.payment_id AND bd.booking_status = @booking_status AND bd.driver_id = @driver_id
+                    WHERE CAST(bd.start_time AS DATE) <= CAST(GETDATE() AS DATE) AND CAST(bd.start_time AS DATE) >= DATEADD(DAY, -7, GETDATE());
 
-                "SELECT DATE( DATE_ADD(NOW(), INTERVAL -1 * `C`.`daynum` DAY)) AS `date` FROM ( " +
-                "SELECT t *10 + u AS `daynum` FROM ( SELECT 0 AS t UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 ) AS A, " +
-                "( SELECT 0 AS u UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9 ) AS B " +
-                ") AS C WHERE C.`daynum` < 7 ORDER BY date " +
+                    SELECT dt.date, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL THEN 1 ELSE 0 END) AS trips_count, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS total_amt, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL AND pd.payment_type = 1 THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS cash_amt, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL AND pd.payment_type = 2 THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS online_amt 
+                    FROM booking_detail AS bd
+                    INNER JOIN payment_detail AS pd ON bd.payment_id = pd.payment_id AND bd.booking_status = 5 AND bd.driver_id = 17
+                    AND CAST(bd.start_time AS DATE) <= CAST(GETDATE() AS DATE) AND CAST(bd.start_time AS DATE) >= DATEADD(DAY, -7, GETDATE())
+                    RIGHT JOIN (
+                        SELECT CAST(DATEADD(DAY, -C.daynum, GETDATE()) AS DATE) AS date 
+                        FROM ( 
+                            SELECT t * 10 + u AS daynum 
+                            FROM (SELECT 0 AS t UNION SELECT 1 UNION SELECT 2 UNION SELECT 3) AS A, 
+                            (SELECT 0 AS u UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) AS B
+                        ) AS C 
+                        WHERE C.daynum < 7 
+                    ) AS dt ON dt.date = CAST(bd.start_time AS DATE) 
+                    GROUP BY dt.date
+					ORDER BY date;
+                `;
 
-") AS `dt` ON `dt`.`date` = DATE(`bd`.`start_time`) GROUP BY `dt`.`date`;"
-                , [bs_complete, uObj.user_id, bs_complete, uObj.user_id, bs_complete, uObj.user_id ], (err, result) => {
+                sql.connect(config).then(pool => {
+                    return pool.request()
+                        .input('booking_status', sql.Int, bs_complete)
+                        .input('driver_id', sql.Int, uObj.user_id)
+                        .query(sqlQuery);
+                }).then(result => {
+                    const totalAmt = result.recordsets[0].reduce((total, obj) => total + parseFloat(obj.amt), 0);
+                    const cashAmt = result.recordsets[0].reduce((total, obj) => obj.payment_type === 1 ? total + parseFloat(obj.amt) : total, 0);
+                    const onlineAmt = result.recordsets[0].reduce((total, obj) => obj.payment_type === 2 ? total + parseFloat(obj.amt) : total, 0);
 
-                    if(err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
+                    const wTotalAmt = result.recordsets[1].reduce((total, obj) => total + parseFloat(obj.amt), 0);
+                    const wCashAmt = result.recordsets[1].reduce((total, obj) => obj.payment_type === 1 ? total + parseFloat(obj.amt) : total, 0);
+                    const wOnlineAmt = result.recordsets[1].reduce((total, obj) => obj.payment_type === 2 ? total + parseFloat(obj.amt) : total, 0);
 
-                    totalAmt = 0;
-                    cashAmt = 0;
-                    onlineAmt = 0;
-
-                    result[0].forEach( (obj) => {
-                        totalAmt = totalAmt + parseFloat(obj.amt);
-
-                        if(obj.payment_type == 1) {
-                            //Cash Payment
-                            cashAmt = cashAmt +  parseFloat(obj.amt);
-                        }else{
-                            //Online Payment
-                            onlineAmt = onlineAmt + parseFloat(obj.amt);
-                        }
-
-                    } )
-
-
-                    wTotalAmt = 0;
-                    wCashAmt = 0;
-                    wOnlineAmt = 0;
-
-                    result[1].forEach((obj) => {
-                        wTotalAmt = wTotalAmt + parseFloat(obj.amt);
-
-                        if (obj.payment_type == 1) {
-                            //Cash Payment
-                            wCashAmt = wCashAmt + parseFloat(obj.amt);
-                        } else {
-                            //Online Payment
-                            wOnlineAmt = wOnlineAmt + parseFloat(obj.amt);
-                        }
-
-                    })
-
-                    res.json( {
-                        'status':"1",
+                    res.json({
+                        'status': "1",
                         "payload": {
-                            'today' : {
-                                'tips_count': result[0].length,
+                            'today': {
+                                'trips_count': result.recordsets[0].length,
                                 'total_amt': totalAmt,
                                 'cash_amt': cashAmt,
                                 'online_amt': onlineAmt,
-                                'list': result[0]
+                                'list': result.recordsets[0]
                             },
                             'week': {
-                                'tips_count': result[1].length,
+                                'trips_count': result.recordsets[1].length,
                                 'total_amt': wTotalAmt,
                                 'cash_amt': wCashAmt,
                                 'online_amt': wOnlineAmt,
-                                'list': result[1],
-                                'chart': result[2],
-                            },
-                            
+                                'list': result.recordsets[1],
+                                'chart': result.recordsets[2],
+                            }
                         }
-                    })
-
-                } )
+                    });
+                }).catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
         }, ut_driver)
 
     } )
@@ -1151,30 +1378,51 @@ function removeDriverWaitUser(booking_id) {
 function checkAccessToken(helperObj, res, callback, requireType = "") {
     helper.Dlog(helperObj.access_token)
     helper.CheckParameterValid(res, helperObj, ["access_token"], () => {
-        db.query('SELECT `user_id`, `name`, `email`, `gender`, `mobile`, `mobile_code`, `auth_token`,  `user_type`, `is_block`,  `image`, `status` FROM `user_detail` WHERE  `auth_token` = ? AND (`status` = ? OR `status` = ?) ', [helperObj.access_token, "1", "2"], (err, result) => {
-
-            if (err) {
-                helper.ThrowHtmlError(err);
-                return
-            }
-
-            helper.Dlog(result)
-
-            if (result.length > 0) {
-                if (requireType != "") {
-                    if (requireType == result[0].user_type) {
-                        return callback(result[0])
-                    } else {
-                        res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." })
-                    }
+        sql.connect(config).then((pool) => {
+            return pool
+              .request()
+              .input('auth_token', sql.VarChar, helperObj.access_token)
+              .input('status1', sql.VarChar, '1')
+              .input('status2', sql.VarChar, '2')
+              .query(
+                `SELECT user_id, name, email, gender, mobile, mobile_code, auth_token, 
+                 user_type, is_block, image, status 
+                 FROM user_detail 
+                 WHERE auth_token = @auth_token 
+                 AND (status = @status1 OR status = @status2);`
+              );
+          })
+          .then((result) => {
+            const user = result.recordset;
+        
+            if (user.length > 0) {
+              helper.Dlog(user);
+        
+              if (requireType !== "") {
+                if (requireType == user[0].user_type) {
+                  return callback(user[0]);
                 } else {
-                    return callback(result[0])
+                  res.json({
+                    status: "0",
+                    code: "404",
+                    message: "Access denied. Unauthorized user access.",
+                  });
                 }
-
+              } else {
+                return callback(user[0]);
+              }
             } else {
-                res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." })
+              res.json({
+                status: "0",
+                code: "404",
+                message: "Access denied. Unauthorized user access.",
+              });
             }
-        })
+          })
+          .catch((err) => {
+            helper.ThrowHtmlError(err);
+          });
+  
     })
 }
 
@@ -1183,116 +1431,137 @@ function driverNewRequestSend(bookingDetail, callback) {
     var latitude = parseFloat(bookingDetail.pickup_lat)
     var longitude = parseFloat(bookingDetail.pickup_long)
 
-    helper.findNearByLocation(latitude, longitude, 20, (minLat, maxLat, minLng, maxLng) => {
+    helper.findNearByLocation(latitude, longitude, 3, (minLat, maxLat, minLng, maxLng) => {
         var allReadySendRequest = bookingDetail.request_driver_id
         if (allReadySendRequest == "") {
             allReadySendRequest = "''"
         }
 
-
-        db.query(
-            "SELECT `ud`.`user_id`, `ud`.`device_source`, `ud`.`push_token`, `ud`.`lati`, `ud`.`longi` FROM `user_detail` AS `ud` " +
-            "INNER JOIN `zone_document` AS `zd` ON `zd`.`zone_id` = `ud`.`zone_id` AND `zd`.`service_id` = ? AND FIND_IN_SET(`zd`.`service_id`, `ud`.`select_service_id`) != 0 " +
-            "INNER JOIN `price_detail` AS `pm` ON `pm`.`zone_id` = `zd`.`zone_id` AND `pm`.`price_id` = ?  " +
-            "INNER JOIN `zone_wise_cars_service` AS `zwcs` ON `ud`.`car_id` = `zwcs`.`user_car_id` AND `zwcs`.`zone_doc_id` = `zd`.`zone_doc_id` " +
-            "WHERE `ud`.`user_type` = 2 AND `ud`.`status` >= 1 AND `ud`.`is_request_send` = 0 AND `zwcs`.`expiry_date` >= ? AND `zwcs`.`status` = 1 AND `zwcs`.`service_provide` = 1 AND (`ud`.`lati` BETWEEN " + minLat + " AND " + maxLat + " ) AND (`ud`.`longi` BETWEEN " + minLng + " AND " + maxLng + " ) AND `ud`.`user_id` NOT IN (" + allReadySendRequest + " ) AND `ud`.`user_id` NOT IN (SELECT `driver_id` FROM `booking_detail` WHERE `pickup_date` BETWEEN ? AND ? AND `booking_status` < ? GROUP BY user_id  );  ", [bookingDetail.service_id, bookingDetail.price_id, helper.serverMySqlDate(bookingDetail.pickup_date, "YYYY-MM-DD"), helper.serverMySqlDate(bookingDetail.pickup_date, "YYYY-MM-DD HH:mm:ss"), helper.serverDateTimeAddMin(bookingDetail.pickup_date, "YYYY-MM-DD HH:mm:ss", newRequestTimeABC), bs_complete], (err, result) => {
-
-                if (err) {
-                    helper.ThrowHtmlError(err);
-                    return
-                }
-
-                if (result.length > 0) {
-
-                    result.forEach((driverInfo, index) => {
-                        result[index].distance = helper.distance(latitude, longitude, driverInfo.lati, driverInfo.longi);
-                    });
-
-                    for (var i = 0; i < result.length; i++) {
-                        for (var j = i; j < result.length; j++) {
-                            if (result[i].distance > result[j].distance) {
-                                result.swap(i, j)
-                            }
-                        }
-                    }
-
-                    //Driver List New Request Send Logic
-                    //Driver For only Live Socket
-
-                    for (var i = 0, len = result.length; i < len; i++) {
-
-                        var driverSocket = controllerSocketList['us_' + result[0].user_id];
-                        if (driverSocket && controllerIO.sockets.sockets.get(driverSocket.socket_id)) {
-
-                            //Driver Push Notification Fire Logic
-
-                            driverSendRequestFire(bookingDetail, result[i], true)
-
-                            var response = {
-                                "status": "1",
-                                "payload": [bookingDetail]
-                            }
-
-                            controllerIO.sockets.sockets.get(driverSocket.socket_id).emit("new_ride_request", response)
-                            return callback(1, bookingDetail);
-
-                        } else {
-                            helper.Dlog("driverSocket client not connected");
-                            helper.Dlog(result[i]);
-                        }
-
-                    }
-
-                    //Driver not live socket then New Request SendNear by first driver only notification
-                    helper.Dlog("new request push notification fire");
-                    driverSendRequestFire(bookingDetail, result[0], true)
-                    return callback(1, bookingDetail)
-
+        sql.connect(config).then((pool) => {
+            return pool
+              .request()
+              .input('service_id', sql.Int, bookingDetail.service_id)
+              .input('price_id', sql.Int, bookingDetail.price_id)
+              .input('pickup_date', sql.VarChar, helper.serverMySqlDate(bookingDetail.pickup_date, 'YYYY-MM-DD'))
+              .input('pickup_date_with_time', sql.VarChar, helper.serverMySqlDate(bookingDetail.pickup_date, 'YYYY-MM-DD HH:mm:ss'))
+              .input('pickup_date_with_time_adjusted', sql.VarChar, helper.serverDateTimeAddMin(bookingDetail.pickup_date, 'YYYY-MM-DD HH:mm:ss', newRequestTimeABC))
+              .input('bs_complete', sql.Int, bs_complete)
+              .query(`
+                SELECT ud.user_id, ud.device_source, ud.push_token, ud.lati, ud.longi
+                FROM user_detail AS ud
+                INNER JOIN zone_document AS zd ON zd.zone_id = ud.zone_id 
+                  AND zd.service_id = @service_id 
+                  AND CHARINDEX(CAST(zd.service_id AS NVARCHAR), ud.select_service_id) != 0
+                INNER JOIN price_detail AS pm ON pm.zone_id = zd.zone_id 
+                  AND pm.price_id = @price_id
+                INNER JOIN zone_wise_cars_service AS zwcs ON ud.car_id = zwcs.user_car_id 
+                  AND zwcs.zone_doc_id = zd.zone_doc_id
+                WHERE ud.user_type = 2 
+                  AND ud.status >= 1 
+                  AND ud.is_request_send = 0 
+                  AND zwcs.expiry_date >= @pickup_date 
+                  AND zwcs.status = 1 
+                  AND zwcs.service_provide = 1 
+                  AND (CAST(ud.lati AS FLOAT) BETWEEN ${minLat} AND ${maxLat}) 
+                  AND (CAST(ud.longi AS FLOAT) BETWEEN ${minLng} AND ${maxLng}) 
+                  AND ud.user_id NOT IN (${allReadySendRequest}) 
+                  AND ud.user_id NOT IN (
+                    SELECT driver_id 
+                    FROM booking_detail 
+                    WHERE pickup_date BETWEEN @pickup_date_with_time AND @pickup_date_with_time_adjusted 
+                      AND booking_status < @bs_complete
+                    GROUP BY driver_id
+                  )
+              `);
+          })
+          .then((result) => {
+            const drivers = result.recordset;
+        
+            if (drivers.length > 0) {
+              drivers.forEach((driverInfo, index) => {
+                drivers[index].distance = helper.distance(latitude, longitude, driverInfo.lati, driverInfo.longi);
+              });
+        
+              drivers.sort((a, b) => a.distance - b.distance); // Sort drivers by distance
+        
+              // Live Socket check
+              for (let i = 0; i < drivers.length; i++) {
+                const driverSocket = controllerSocketList['us_' + drivers[i].user_id];
+                if (driverSocket && controllerIO.sockets.sockets.get(driverSocket.socket_id)) {
+                  driverSendRequestFire(bookingDetail, drivers[i], true);
+        
+                  const response = {
+                    status: "1",
+                    payload: [bookingDetail],
+                  };
+        
+                  controllerIO.sockets.sockets.get(driverSocket.socket_id).emit("new_ride_request", response);
+                  return callback(1, bookingDetail);
                 } else {
-                    //no Driver Available
-                    helper.Dlog(" No Driver Available : " + bookingDetail.accpet_driver_id)
-
-                    if (bookingDetail.accpet_driver_id != undefined && bookingDetail.accpet_driver_id != "") {
-                        //Recall Driver Not Driver Found
-                        db.query("UPDATE `booking_detail` SET `driver_id` = `accpet_driver_id` WHERE `booking_id` = ? ", [bookingDetail.booking_id], (err, result) => {
-                            if (err) {
-                                helper.ThrowHtmlError(err);
-                                return
-                            }
-
-                            if (result.affectedRows > 0) {
-                                helper.Dlog("Recall Driver Near info not Driver available")
-                            } else {
-                                helper.Dlog("Recall Driver Near info not Driver available")
-                            }
-
-                            return callback(2, "recall driver not available")
-                        })
-                    } else {
-                        //New Booking Request
-                        db.query("UPDATE `booking_detail` SET `booking_status` = ?, `stop_time` = NOW() WHERE `booking_id` = ?", [bs_no_driver, bookingDetail.booking_id], (err, result) => {
-
-                            if (err) {
-                                helper.ThrowHtmlError(err);
-                                return
-                            }
-
-                            if (result.affectedRows > 0) {
-                                helper.Dlog("Booking Status " + bs_no_driver);
-                                helper.Dlog("Near info not Driver available")
-                            } else {
-                                helper.Dlog("Near info not Driver available")
-                            }
-
-                            // user ride refund amount
-
-                            return callback(2, "driver not available")
-                        })
-                    }
-
+                  helper.Dlog("Driver socket client not connected");
+                  helper.Dlog(drivers[i]);
                 }
+              }
+        
+              // If no live socket, send request to the first nearby driver as a notification
+              helper.Dlog("New request push notification fire");
+              driverSendRequestFire(bookingDetail, drivers[0], true);
+              return callback(1, bookingDetail);
+            } else {
+              // No drivers available
+              helper.Dlog("No driver available for booking: " + bookingDetail.accpet_driver_id);
+        
+              if (bookingDetail.accpet_driver_id) {
+                // Recall driver not found
+                sql.connect(config)
+                  .then((pool) => {
+                    return pool
+                      .request()
+                      .input('booking_id', sql.Int, bookingDetail.booking_id)
+                      .query(`
+                        UPDATE booking_detail 
+                        SET driver_id = accpet_driver_id 
+                        WHERE booking_id = @booking_id
+                      `);
+                  })
+                  .then((result) => {
+                    if (result.rowsAffected[0] > 0) {
+                      helper.Dlog("Recall driver, no drivers found.");
+                    } else {
+                      helper.Dlog("Recall driver, no drivers found.");
+                    }
+                    return callback(2, "Recall driver not available");
+                  })
+                  .catch((err) => helper.ThrowHtmlError(err));
+              } else {
+                // No driver at all, update booking status
+                sql.connect(config)
+                  .then((pool) => {
+                    return pool
+                      .request()
+                      .input('bs_no_driver', sql.Int, bs_no_driver)
+                      .input('booking_id', sql.Int, bookingDetail.booking_id)
+                      .query(`
+                        UPDATE booking_detail 
+                        SET booking_status = @bs_no_driver, stop_time = GETDATE() 
+                        WHERE booking_id = @booking_id
+                      `);
+                  })
+                  .then((result) => {
+                    if (result.rowsAffected[0] > 0) {
+                      helper.Dlog("Booking status updated to no driver.");
+                    } else {
+                      helper.Dlog("Booking status not updated.");
+                    }
+                    return callback(2, "Driver not available");
+                  })
+                  .catch((err) => helper.ThrowHtmlError(err));
+              }
             }
-        )
+          })
+          .catch((err) => {
+            helper.ThrowHtmlError(err);
+          });         
 
     })
 
@@ -1318,28 +1587,39 @@ function driverSendRequestFire(bookingDetail, driverDetail, isSendNotification) 
         allReadySendRequest = allReadySendRequest + ',' + driverDetail.user_id.toString()
     }
 
-    db.query("UPDATE `booking_detail` SET `driver_id` = ?, `request_driver_id` = ? WHERE `booking_id` = ? ; " +
-        "UPDATE `user_detail` SET `is_request_send` = ? WHERE `user_id` = ? ", [driverDetail.user_id, allReadySendRequest, bookingDetail.booking_id, '1', driverDetail.user_id], (err, result) => {
-            if (err) {
-                helper.ThrowHtmlError(err);
-                return
-            }
-
-            helper.Dlog(" token:- " + requestToken + " d_id:-" + driverDetail.user_id);
-            helper.Dlog(result);
-
-            if (result[0].affectedRows > 0 && result[1].affectedRows > 0) {
-                //DB Update Done
-                helper.Dlog("DB Booking detail Update Successfully")
-
-                // Corn Create Request => Get Feedback (accept, decline, timeout)
-                driverSendRequestTimeOver(bookingDetail.booking_id, bookingDetail.driver_id, requestToken, requestWaitingAcceptTime)
-            } else {
-                //fail
-                helper.Dlog("DB Booking detail Update fail")
-            }
-
-        })
+    sql.connect(config).then((pool) => {
+        return pool
+          .request()
+          .input('driver_id', sql.Int, driverDetail.user_id)
+          .input('request_driver_id', sql.VarChar, allReadySendRequest)
+          .input('booking_id', sql.Int, bookingDetail.booking_id)
+          .input('is_request_send', sql.Int, 1) // equivalent to '1' in MySQL
+          .query(`
+            UPDATE booking_detail 
+            SET driver_id = @driver_id, request_driver_id = @request_driver_id 
+            WHERE booking_id = @booking_id;
+    
+            UPDATE user_detail 
+            SET is_request_send = @is_request_send 
+            WHERE user_id = @driver_id;
+          `);
+      })
+      .then((result) => {
+        // MSSQL `rowsAffected` is an array, where each element indicates the affected rows of each statement in a batch
+        if (result.rowsAffected[0] > 0 && result.rowsAffected[1] > 0) {
+          helper.Dlog("DB Booking detail Update Successfully");
+    
+          // Corn Create Request => Get Feedback (accept, decline, timeout)
+          driverSendRequestTimeOver(bookingDetail.booking_id, bookingDetail.driver_id, requestToken, requestWaitingAcceptTime);
+        } else {
+          // If either update failed
+          helper.Dlog("DB Booking detail Update fail");
+        }
+      })
+      .catch((err) => {
+        helper.ThrowHtmlError(err);
+      });
+  
 
     if (isSendNotification) {
 
@@ -1377,23 +1657,28 @@ function driverSendRequestTimeOver(bookingId, driverId, requestToken, time) {
 
     var oneTimeCron = setTimeout(() => {
         helper.Dlog(" -------------- oneTime Cron Request Accept TimeOver(" + time + ")");
-        db.query("UPDATE `user_detail` SET `is_request_send` = ? WHERE `user_id` = ? ", ['0', driverId], (err, result) => {
-            if (err) {
-                helper.ThrowHtmlError(err);
-                return
-            }
-
-            if (result.affectedRows > 0) {
-                helper.Dlog("Driver id change success : " + driverId);
-                // Find New Driver And Send Request this booking id
-
-                driverNewRequestSendByBookingID(bookingId);
-
+        sql.connect(config).then((pool) => {
+            return pool
+              .request()
+              .input('is_request_send', sql.Int, 0) // equivalent to '0' in MySQL
+              .input('user_id', sql.Int, driverId)   // assuming driverId is an integer
+              .query('UPDATE user_detail SET is_request_send = @is_request_send WHERE user_id = @user_id');
+          })
+          .then((result) => {
+            // SQL Server's `rowsAffected` is an array, and we need to check if the first element is greater than 0
+            if (result.rowsAffected[0] > 0) {
+              helper.Dlog("Driver id change success : " + driverId);
+              // Find New Driver And Send Request this booking id
+              driverNewRequestSendByBookingID(bookingId);
             } else {
-                helper.Dlog("Driver id change fail: " + driverId);
+              helper.Dlog("Driver id change fail: " + driverId);
             }
+        
             removeRequestTokenPendingArr(requestToken);
-        })
+          })
+          .catch((err) => {
+            helper.ThrowHtmlError(err);
+          });  
     }, time * 1000)
     requestPendingArray[requestToken] = oneTimeCron;
 
@@ -1408,91 +1693,93 @@ function removeRequestTokenPendingArr(token) {
 
 function driverNewRequestSendByBookingID(bookingID) {
     helper.Dlog("---------------- Other Driver Request Send Processing -----------------")
-    db.query("SELECT `bd`.`booking_id`, `bd`.`driver_id`, `bd`.`user_id`, `bd`.`pickup_lat`, `bd`.`pickup_long`, `bd`.`pickup_address`, `bd`.`drop_lat`, `bd`.`drop_long`, `bd`.`drop_address`, `bd`.`pickup_date`, `bd`.`service_id`, `bd`.`price_id`, `bd`.`payment_id`, `bd`.`est_total_distance`, `bd`.`est_duration`,  `bd`.`created_date`, `bd`.`accpet_time`, `bd`.`start_time`, `bd`.`stop_time`, `bd`.`booking_status`, `bd`.`request_driver_id`, `pd`.`zone_id`, `pd`.`mini_km`, `sd`.`service_name`, `sd`.`color`, `sd`.`icon`, `ud`.`name`, `ud`.`mobile`, `ud`.`mobile_code`, `ud`.`push_token`, (CASE WHEN `ud`.`image` != ''  THEN CONCAT( '" + helper.ImagePath() + "' , `ud`.`image`  ) ELSE '' END) AS `image`, `ppd`.`amt`, `ppd`.`driver_amt`, `ppd`.`payment_type` FROM `booking_detail` AS `bd` " +
-        "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`user_id` " +
-        "INNER JOIN `price_detail` AS `pd` ON `pd`.`price_id` = `bd`.`price_id` " +
-        "INNER JOIN `payment_detail` AS `ppd` ON `ppd`.`payment_id` = `bd`.`payment_id` " +
-        "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `bd`.`service_id` " +
-        "WHERE `bd`.`booking_id` = ? AND ( `bd`.`booking_status` = ? OR (`bd`.`booking_status` < ? AND `bd`.`accpet_driver_id` != '')) ",
-
-        [bookingID, bs_pending, bs_start], (err, result) => {
-
-            if (err) {
-                helper.ThrowHtmlError(err);
-                return
-            }
-
-
-            if (result.length > 0) {
-                driverNewRequestSend(result[0], (status, bookingInfo) => {
-
-                    if (status == 2) {
-
-                        if (result[0].accpet_driver_id == "") {
-                            //New Booking Request No Driver Found
-
-                            var userSocket = controllerSocketList['us_' + result[0].user_id];
-                            if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
-
-                                var response = {
-                                    "status": "1",
-                                    "payload": {
-                                        "booking_id": bookingID,
-                                        "booking_status": bs_no_driver,
-                                    },
-                                    "message": "driver not available"
-                                }
-
-                                controllerIO.sockets.sockets.get(userSocket.socket_id).emit("driver_not_available", response)
-
-                            }
-
-                        } else {
-                            //Recall Driver Not Found
-
-                            var driverSocket = controllerSocketList['us_' + result[0].accpet_driver_id];
-                            if (driverSocket && controllerIO.sockets.sockets.get(driverSocket.socket_id)) {
-
-                                var response = {
-                                    "status": "1",
-                                    "payload": {
-                                        "booking_id": bookingID,
-                                        "booking_status": bs_no_driver,
-                                    },
-                                    "message": "Recall driver not available"
-                                }
-
-                                controllerIO.sockets.sockets.get(driverSocket.socket_id).emit("driver_not_available", response)
-
-                            }
-
-                            db.query("SELECT `user_id`, `push_token` FROM `user_detail` WHERE `user_id` = ? ", [bookingInfo.accpet_driver_id], (err, result) => {
-                                if (err) {
-                                    helper.ThrowHtmlError(err)
-                                    return;
-                                }
-
-                                if (result.length > 0) {
-                                    oneSignalPushFire(ut_driver, [result[0].push_token], nt_t_7_drive_no_available, "Recall driver not available", {
-
-                                        "booking_id": bookingInfo.booking_id,
-                                        "notification_id": nt_id_7_drive_no_available,
-                                    })
-                                }
-                            })
-                        }
-
-
-
+    sql.connect(config).then((pool) => {
+        return pool
+          .request()
+          .input('bookingID', sql.Int, bookingID)
+          .input('bs_pending', sql.Int, bs_pending)
+          .input('bs_start', sql.Int, bs_start)
+          .query(`
+            SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, 
+                   bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, 
+                   bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, 
+                   bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, 
+                   sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, 
+                   (CASE WHEN ud.image != '' THEN CONCAT('` + helper.ImagePath() + `', ud.image) ELSE '' END) AS image, 
+                   ppd.amt, ppd.driver_amt, ppd.payment_type 
+            FROM booking_detail AS bd
+            INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id
+            INNER JOIN price_detail AS pd ON pd.price_id = bd.price_id
+            INNER JOIN payment_detail AS ppd ON ppd.payment_id = bd.payment_id
+            INNER JOIN service_detail AS sd ON sd.service_id = bd.service_id
+            WHERE bd.booking_id = @bookingID 
+            AND (bd.booking_status = @bs_pending 
+                 OR (bd.booking_status < @bs_start AND bd.accpet_driver_id != ''))
+          `);
+      })
+      .then((result) => {
+        if (result.recordset.length > 0) {
+          driverNewRequestSend(result.recordset[0], (status, bookingInfo) => {
+            if (status == 2) {
+              if (result.recordset[0].accpet_driver_id === "") {
+                // New Booking Request No Driver Found
+                let userSocket = controllerSocketList['us_' + result.recordset[0].user_id];
+                if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
+                  let response = {
+                    "status": "1",
+                    "payload": {
+                      "booking_id": bookingID,
+                      "booking_status": bs_no_driver,
+                    },
+                    "message": "driver not available"
+                  };
+                  controllerIO.sockets.sockets.get(userSocket.socket_id).emit("driver_not_available", response);
+                }
+              } else {
+                // Recall Driver Not Found
+                let driverSocket = controllerSocketList['us_' + result.recordset[0].accpet_driver_id];
+                if (driverSocket && controllerIO.sockets.sockets.get(driverSocket.socket_id)) {
+                  let response = {
+                    "status": "1",
+                    "payload": {
+                      "booking_id": bookingID,
+                      "booking_status": bs_no_driver,
+                    },
+                    "message": "Recall driver not available"
+                  };
+                  controllerIO.sockets.sockets.get(driverSocket.socket_id).emit("driver_not_available", response);
+                }
+    
+                // Check for driver's push token
+                sql.connect(config)
+                  .then((pool) => {
+                    return pool
+                      .request()
+                      .input('accpet_driver_id', sql.Int, bookingInfo.accpet_driver_id)
+                      .query(`
+                        SELECT user_id, push_token 
+                        FROM user_detail 
+                        WHERE user_id = @accpet_driver_id
+                      `);
+                  })
+                  .then((driverResult) => {
+                    if (driverResult.recordset.length > 0) {
+                      oneSignalPushFire(ut_driver, [driverResult.recordset[0].push_token], nt_t_7_drive_no_available, "Recall driver not available", {
+                        "booking_id": bookingInfo.booking_id,
+                        "notification_id": nt_id_7_drive_no_available,
+                      });
                     }
-
-                })
-
-            } else {
-                helper.Dlog("Not Booking info get")
+                  })
+                  .catch((err) => helper.ThrowHtmlError(err));
+              }
             }
-
-        })
+          });
+        } else {
+          helper.Dlog("Not Booking info get");
+        }
+      })
+      .catch((err) => helper.ThrowHtmlError(err));
+  
 }
 
 function userRideCancel(booking_id, booking_status, user_id, user_type, isForce, callback) {
@@ -1513,118 +1800,154 @@ function userRideCancel(booking_id, booking_status, user_id, user_type, isForce,
     if (isForce) {
         condition = ""
     } else {
-        condition = " AND `bd`.`booking_status` = '" + booking_status + "' ";
+        condition = " AND bd.booking_status = '" + booking_status + "' ";
     }
 
-    var sql = ""
+    var sqlQry = ""
 
     if (booking_status == bs_go_user || booking_status == bs_wait_user) {
-        sql = "UPDATE `booking_detail` AS `bd`" +
-            "INNER JOIN `user_detail` AS `ud` ON `bd`.`driver_id` = `ud`.`user_id` " +
-            "INNER JOIN `user_detail` AS `uud` ON `bd`.`user_id` = `uud`.`user_id` " +
-            "SET `bd`.`booking_status` = ?, `bd`.`is_driver_cancel` = ?, `bd`.`stop_time` = NOW(), `ud`.`status` = '1', `uud`.`status` = '1' " +
-            "WHERE `bd`.`booking_id` = ? AND `bd`.`" + id + "` = ? AND `bd`.`booking_status` <= ? " + condition;
+        sqlQry = `UPDATE bd
+                SET bd.booking_status = @bs_cancel, 
+                    bd.is_driver_cancel = @isDriverCancel, 
+                    bd.stop_time = GETDATE()
+                FROM booking_detail AS bd
+                WHERE bd.booking_id = @booking_id 
+                AND bd.${id} = @user_id 
+                AND bd.booking_status <= @statusCondition
+                ${condition};
+                UPDATE ud
+                SET ud.status = '1',
+                ud.is_request_send=0
+                FROM user_detail AS ud
+                INNER JOIN booking_detail AS bd ON bd.driver_id = ud.user_id
+                WHERE bd.booking_id = @booking_id;
+                UPDATE uud
+                SET uud.status = '1',
+                uud.is_request_send=0
+                FROM user_detail AS uud
+                INNER JOIN booking_detail AS bd ON bd.user_id = uud.user_id
+                WHERE bd.booking_id = @booking_id;
+                `;
     } else {
-        sql = "UPDATE `booking_detail` AS `bd`" +
-            "SET `bd`.`booking_status` = ?, `bd`.`is_driver_cancel` = ?, `bd`.`stop_time` = NOW() " +
-            "WHERE `bd`.`booking_id` = ? AND `bd`.`" + id + "` = ? AND `bd`.`booking_status` <= ? " + condition;
+        sqlQry = `UPDATE bd
+                SET bd.booking_status = @bs_cancel, 
+                    bd.is_driver_cancel = @isDriverCancel, 
+                    bd.stop_time = GETDATE()
+                FROM booking_detail AS bd
+                WHERE bd.booking_id = @booking_id 
+                AND bd.${id} = @user_id 
+                AND bd.booking_status <= @statusCondition 
+                ${condition};
+                UPDATE ud
+                SET ud.status = '1',
+                ud.is_request_send=0
+                FROM user_detail AS ud
+                INNER JOIN booking_detail AS bd ON bd.driver_id = ud.user_id
+                WHERE bd.booking_id = @booking_id;
+                UPDATE uud
+                SET uud.status = '1',
+                uud.is_request_send=0
+                FROM user_detail AS uud
+                INNER JOIN booking_detail AS bd ON bd.user_id = uud.user_id
+                WHERE bd.booking_id = @booking_id;
+                `;
     }
 
-    helper.Dlog(sql);
-    db.query(sql, [bs_cancel, isDriverCancel, booking_id, user_id, isForce ? "8" : bs_start], (err, result) => {
-        if (err) {
-            helper.ThrowHtmlError(err);
-            return
-        }
-
-        if (result.affectedRows > 0) {
-            if (booking_status > bs_pending) {
-                //Accepted
-
-                // Booking Info need
-                //Socket.io  
-                bookingInformation(booking_id, user_type, (status, result) => {
-                    if (status == 1) {
-
-                        // helper.Dlog(result);
-
-                        helper.timeDuration(rideCancelTime, helper.serverMySqlDate(result[0][checkTime]), (totalMin, durationString) => {
-
-                            if (booking_status >= bs_go_user && booking_status <= bs_wait_user) {
-                                // User taking Remove All
-                            }
-
-                            var emit = "user_cancel_ride"
-                            var driverSocket;
-                            var notificationType = ut_driver
-                            var noti_message = nt_t_6_ride_cancel
-
-                            if (user_type == 2) {
-                                emit = "driver_cancel_ride"
-                                driverSocket = controllerSocketList['us_' + result[0].user_id];
-                                notificationType = ut_user
-                                var noti_message = nt_t_6_ride_cancel
-                            } else {
-                                var driverSocket = controllerSocketList['us_' + result[0].driver_id];
-                            }
-
-                            response = {
-                                'status': "1",
-                                "payload": {
-                                    "booking_id": parseInt(booking_id),
-                                    "booking_status": bs_cancel,
-                                },
-                                "message": noti_message
-                            }
-
-                            if (driverSocket && controllerIO.sockets.sockets.get(driverSocket.socket_id)) {
-
-                                controllerIO.sockets.sockets.get(driverSocket.socket_id).emit(emit, response)
-                                helper.Dlog("Ride Cancel Node Notification send -----" + emit)
-                            } else {
-                                helper.Dlog("Ride Cancel Node Notification User not connect -----" + emit)
-                            }
-
-                            oneSignalPushFire(notificationType, [result[0].push_token], nt_t_6_ride_cancel, noti_message, {
-                                "booking_id": parseInt(booking_id).toString(),
-                                "booking_status": bs_cancel.toString(),
-                                "notification_id": nt_id_6_ride_cancel
-                            })
-
-                            return callback({
-                                "status": "1", "message": "Ride Cancel successfully", "payload": {
-                                    "booking_id": parseInt(booking_id),
-                                    "booking_status": bs_cancel,
-                                }
-                            })
-
-                        })
-
-                    } else {
-                        return callback({
-                            "status": "0", "message": "ride cancel fail"
-                        })
-                    }
-                })
-
-
-            } else {
-                //Ride Not Accepted
+    helper.Dlog(sqlQry);
+    sql.connect(config).then((pool) => {
+        return pool
+          .request()
+          .input('bs_cancel', sql.Int, bs_cancel)
+          .input('isDriverCancel', sql.Int, isDriverCancel)
+          .input('booking_id', sql.Int, booking_id)
+          .input('user_id', sql.Int, user_id)
+          .input('statusCondition', sql.Int, isForce ? 8 : bs_start)
+          .query(sqlQry);
+      })
+      .then((result) => {
+        if (result.rowsAffected[0] > 0) {
+          if (booking_status > bs_pending) {
+            // Accepted: Proceed with booking information and notification
+            bookingInformation(booking_id, user_type, (status, result) => {
+              if (status === 1) {
+                helper.timeDuration(rideCancelTime, helper.serverMySqlDate(result[0][checkTime]), (totalMin, durationString) => {
+                  if (booking_status >= bs_go_user && booking_status <= bs_wait_user) {
+                    // Handle user-specific logic for status between `bs_go_user` and `bs_wait_user`
+                  }
+    
+                  let emit = "user_cancel_ride";
+                  let driverSocket;
+                  let notificationType = ut_driver;
+                  let noti_message = nt_t_6_ride_cancel;
+    
+                  if (user_type === 2) {
+                    emit = "driver_cancel_ride";
+                    driverSocket = controllerSocketList['us_' + result[0].user_id];
+                    notificationType = ut_user;
+                    noti_message = nt_t_6_ride_cancel;
+                  } else {
+                    driverSocket = controllerSocketList['us_' + result[0].driver_id];
+                  }
+    
+                  const response = {
+                    'status': "1",
+                    "payload": {
+                      "booking_id": parseInt(booking_id),
+                      "booking_status": bs_cancel,
+                    },
+                    "message": noti_message,
+                  };
+    
+                  if (driverSocket && controllerIO.sockets.sockets.get(driverSocket.socket_id)) {
+                    controllerIO.sockets.sockets.get(driverSocket.socket_id).emit(emit, response);
+                    helper.Dlog("Ride Cancel Node Notification sent -----" + emit);
+                  } else {
+                    helper.Dlog("Ride Cancel Node Notification User not connected -----" + emit);
+                  }
+    
+                  oneSignalPushFire(notificationType, [result[0].push_token], nt_t_6_ride_cancel, noti_message, {
+                    "booking_id": parseInt(booking_id).toString(),
+                    "booking_status": bs_cancel.toString(),
+                    "notification_id": nt_id_6_ride_cancel,
+                  });
+    
+                  return callback({
+                    "status": "1",
+                    "message": "Ride Cancelled successfully",
+                    "payload": {
+                      "booking_id": parseInt(booking_id),
+                      "booking_status": bs_cancel,
+                    },
+                  });
+                });
+              } else {
                 return callback({
-                    "status": "1", "message": "Ride Cancel successfully", "payload": {
-                        "booking_id": parseInt(booking_id),
-                        "booking_status": bs_cancel,
-                    }
-                })
-            }
-
-        } else {
+                  "status": "0",
+                  "message": "Ride cancel failed",
+                });
+              }
+            });
+          } else {
+            // Ride Not Accepted: Respond with successful cancellation
             return callback({
-                "status": "0",
-                "message": "ride cancel fail"
-            })
+              "status": "1",
+              "message": "Ride Cancelled successfully",
+              "payload": {
+                "booking_id": parseInt(booking_id),
+                "booking_status": bs_cancel,
+              },
+            });
+          }
+        } else {
+          // Query affected no rows, cancel failed
+          return callback({
+            "status": "0",
+            "message": "Ride cancel failed",
+          });
         }
-    })
+      })
+      .catch((err) => helper.ThrowHtmlError(err));
+  
 
 }
 
@@ -1643,85 +1966,112 @@ function bookingInformation(booking_id, user_type, callback) {
             break;
     }
 
-    db.query("SELECT `bd`.*, `sd`.*, `pd`. *, `pm`.*, `zl`.*, `ud`.`name`, `ud`.`gender`, `uud`.`email`, `ud`.`mobile`, `ud`.`lati`, `ud`.`longi`, `ud`.`user_type`, `ud`.`push_token`, `cs`.`series_name`, `cm`.`model_name`, `cb`.`brand_name`, `ucd`.`car_number`, `pd`.`status` AS `payment_status` FROM `booking_detail`AS `bd` " +
-
-        "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`.`" + userId + "` " +
-        "INNER JOIN `user_detail` AS `uud` ON `uud`.`user_id` = `bd`.`user_id` " +
-        "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `bd`.`service_id` " +
-        "INNER JOIN `payment_detail` AS `pd` ON `pd`.`payment_id` = `bd`.`payment_id` " +
-        "INNER JOIN `price_detail` AS `pm` ON `pm`.`price_id` = `bd`.`price_id`" +
-        "INNER JOIN `zone_list` AS `zl` ON `pm`.`zone_id` = `zl`.`zone_id` " +
-        "LEFT JOIN `user_cars` AS `ucd` ON `ucd`.`user_car_id` = `bd`.`user_car_id` " +
-        "LEFT JOIN `car_series` AS `cs` ON `cs`.`series_id` = `ucd`.`series_id`  " +
-        "LEFT JOIN `car_model` AS `cm` ON `cm`.`model_id` = `cs`.`model_id` " +
-        "LEFT JOIN `car_brand` AS `cb`ON `cb`.`brand_id` = `cs`.`brand_id` " +
-        "WHERE `bd`.`booking_id` IN (" + booking_id + ")", [], (err, result) => {
-            if (err) {
-                helper.ThrowHtmlError(err);
-                return
-            }
-
-            if (result.length > 0) {
-                return callback(1, result)
-            } else {
-                return callback(0, "No Booking Information")
-            }
-
-        });
+    sql.connect(config).then((pool) => {
+        // Replace the userId and booking_id with parameters
+        return pool
+            .request()
+            .input('userId', sql.VarChar, userId) // Assumed to be an integer, adjust type as needed
+            .input('booking_id', sql.VarChar, booking_id) // Adjust type based on how booking_id is used
+            .query(`
+                SELECT bd.*,sd.*,pd.*,pm.*,zl.*,ud.name,ud.gender,uud.email,ud.mobile,ud.lati,ud.longi,ud.user_type,ud.push_token, 
+                    cs.series_name,cm.model_name,cb.brand_name,ucd.car_number,pd.status AS payment_status
+                FROM booking_detail AS bd
+                INNER JOIN user_detail AS ud ON ud.user_id = bd.` + userId + `
+                INNER JOIN user_detail AS uud ON uud.user_id = bd.user_id
+                INNER JOIN service_detail AS sd ON sd.service_id = bd.service_id
+                INNER JOIN payment_detail AS pd ON pd.payment_id = bd.payment_id
+                INNER JOIN price_detail AS pm ON pm.price_id = bd.price_id
+                INNER JOIN zone_list AS zl ON pm.zone_id = zl.zone_id
+                LEFT JOIN user_cars AS ucd ON ucd.user_car_id = bd.user_car_id
+                LEFT JOIN car_series AS cs ON cs.series_id = ucd.series_id
+                LEFT JOIN car_model AS cm ON cm.model_id = cs.model_id
+                LEFT JOIN car_brand AS cb ON cb.brand_id = cs.brand_id
+                WHERE bd.booking_id IN (@booking_id)
+            `);
+    })
+    .then((result) => {
+        // Handle the result
+        if (result.recordset.length > 0) {
+            return callback(1, result.recordset);
+        } else {
+            return callback(0, "No Booking Information");
+        }
+    })
+    .catch((err) => {
+        // Handle any errors from the query
+        helper.ThrowHtmlError(err);
+    });
 
 }
 
-function bookingInformationDetail(booking_id, user_type, callback) {
-    var userId = "`user_id`"
-    var otp_condition = "";
+function bookingInformationDetail(booking_id, user_type) {
+    return new Promise((resolve, reject) => {
+        var userId = "user_id";
+        var otp_condition = "";
 
-    helper.Dlog(booking_id);
+        helper.Dlog(booking_id);
 
-    switch (user_type) {
-        case 2, '2':
-            userId = "`user_id`"
-
-            break;
-        default:
-            userId = "`driver_id`"
-            otp_condition = " (CASE WHEN `bd`.`booking_status` <= '" + bs_wait_user + "' THEN `bd`.`otp_code` ELSE '-' END ) AS `otp_code`, ";
-            break;
-    }
-
-    var sql = "SELECT `bd`.`booking_id`, `bd`.`user_id`, `bd`.`pickup_lat`, `bd`.`pickup_long`, `bd`.`pickup_address`, " + otp_condition + " `bd`.`drop_lat`, `bd`.`drop_long`, `bd`.`drop_address`, `bd`.`service_id`, `bd`.`price_id`, `bd`.`driver_id`, `bd`.`driver_rating`, `bd`.`driver_comment`, `bd`.`user_rating`, `bd`.`user_comment`, `bd`.`total_distance`, `bd`.`accpet_time`, `bd`.`payment_id` , `bd`.`start_time` ,`bd`.`stop_time` ,`bd`.`duration` ,`bd`.`toll_tax` ,`bd`.`tip_amount` ,`bd`.`booking_status`, `bd`.`est_total_distance`, `bd`.`est_duration`, `pm`.`mini_km`, `ud`.`name`, `ud`.`push_token`, `ud`.`gender`, `ud`.`mobile`, `ud`.`mobile_code`, `ud`.`lati`, `ud`.`longi` , (CASE WHEN `ud`.`image` != ''  THEN CONCAT( '" + helper.ImagePath() + "' , `ud`.`image`  ) ELSE '' END) AS `image`,  `pd`.`payment_type`,   `pd`.`amt`,   `pd`.`payment_date`,   `pd`.`tax_amt`,  `pd`.`pay_amt`,  `pd`.`pay_card_amt`,  `pd`.`driver_amt`,  `pd`.`pay_wallet_amt`, `pd`.`status` AS `user_payment_status`, `sd`.`service_name`, `sd`.`color`, (CASE WHEN `sd`.`top_icon` != ''  THEN CONCAT( '" + helper.ImagePath() + "' , `sd`.`top_icon`  ) ELSE '' END) AS `top_icon`, (CASE WHEN `sd`.`icon` != ''  THEN CONCAT( '" + helper.ImagePath() + "' ,`sd`.`icon`  ) ELSE '' END) AS `icon`,  `cs`.`series_name`, `cm`.`model_name`, `cb`.`brand_name`, `ucd`.`car_number`, `pd`.`status` AS `payment_status` FROM `booking_detail`AS `bd` " +
-
-        "INNER JOIN `user_detail` AS `ud` ON `ud`.`user_id` = `bd`." + userId +
-        " INNER JOIN `user_detail` AS `uud` ON `uud`.`user_id` = `bd`.`user_id` " +
-        "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `bd`.`service_id` " +
-        "INNER JOIN `payment_detail` AS `pd` ON `pd`.`payment_id` = `bd`.`payment_id` " +
-        "INNER JOIN `price_detail` AS `pm` ON `pm`.`price_id` = `bd`.`price_id`" +
-        "INNER JOIN `zone_list` AS `zl` ON `pm`.`zone_id` = `zl`.`zone_id` " +
-        "LEFT JOIN `user_cars` AS `ucd` ON `ucd`.`user_car_id` = `bd`.`user_car_id` " +
-        "LEFT JOIN `car_series` AS `cs` ON `cs`.`series_id` = `ucd`.`series_id`  " +
-        "LEFT JOIN `car_model` AS `cm` ON `cm`.`model_id` = `cs`.`model_id` " +
-        "LEFT JOIN `car_brand` AS `cb`ON `cb`.`brand_id` = `cs`.`brand_id` " +
-        "WHERE `bd`.`booking_id`  = ? GROUP BY `bd`.`booking_id`";
-
-
-    helper.Dlog(
-        sql
-
-    )
-
-    db.query(sql, [booking_id], (err, result) => {
-        if (err) {
-            helper.ThrowHtmlError(err);
-            return
+        switch (user_type) {
+            case 2:
+            case '2':
+                userId = "user_id";
+                break;
+            default:
+                userId = "driver_id";
+                otp_condition = `
+                    (CASE WHEN bd.booking_status <= ${bs_wait_user} 
+                    THEN bd.otp_code ELSE '-' END) AS otp_code, `;
+                break;
         }
 
-        if (result.length > 0) {
-            return callback(1, result)
-        } else {
-            return callback(0, "No Booking Information")
-        }
+        const query = `
+            SELECT 
+                bd.booking_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, ${otp_condition}
+                bd.drop_lat, bd.drop_long, bd.drop_address, bd.service_id, bd.price_id, bd.driver_id, 
+                bd.driver_rating, bd.driver_comment, bd.user_rating, bd.user_comment, bd.total_distance, 
+                bd.accpet_time, bd.payment_id, bd.start_time, bd.stop_time, bd.duration, bd.toll_tax, bd.tip_amount, 
+                bd.booking_status, bd.est_total_distance, bd.est_duration, pm.mini_km, ud.name, ud.push_token, 
+                ud.gender, ud.mobile, ud.mobile_code, ud.lati, ud.longi, 
+                (CASE WHEN ud.image != '' THEN CONCAT('${helper.ImagePath()}', ud.image) ELSE '' END) AS image, 
+                pd.payment_type, pd.amt, pd.payment_date, pd.tax_amt, pd.pay_amt, pd.pay_card_amt, 
+                pd.driver_amt, pd.pay_wallet_amt, pd.status AS user_payment_status, sd.service_name, sd.color, 
+                (CASE WHEN sd.top_icon != '' THEN CONCAT('${helper.ImagePath()}', sd.top_icon) ELSE '' END) AS top_icon, 
+                (CASE WHEN sd.icon != '' THEN CONCAT('${helper.ImagePath()}', sd.icon) ELSE '' END) AS icon, 
+                cs.series_name, cm.model_name, cb.brand_name, ucd.car_number, pd.status AS payment_status 
+            FROM booking_detail AS bd
+            INNER JOIN user_detail AS ud ON ud.user_id = bd.${userId}
+            INNER JOIN user_detail AS uud ON uud.user_id = bd.user_id
+            INNER JOIN service_detail AS sd ON sd.service_id = bd.service_id
+            INNER JOIN payment_detail AS pd ON pd.payment_id = bd.payment_id
+            INNER JOIN price_detail AS pm ON pm.price_id = bd.price_id
+            INNER JOIN zone_list AS zl ON pm.zone_id = zl.zone_id
+            LEFT JOIN user_cars AS ucd ON ucd.user_car_id = bd.user_car_id
+            LEFT JOIN car_series AS cs ON cs.series_id = ucd.series_id
+            LEFT JOIN car_model AS cm ON cm.model_id = cs.model_id
+            LEFT JOIN car_brand AS cb ON cb.brand_id = cs.brand_id
+            WHERE bd.booking_id = @booking_id`;
 
+        helper.Dlog(query);
+
+        sql.connect(config)
+            .then(pool => {
+                return pool
+                    .request()
+                    .input('booking_id', sql.Int, booking_id)
+                    .query(query);
+            })
+            .then(result => {
+                if (result.recordset.length > 0) {
+                    resolve(result.recordset);  // Resolve with booking details
+                } else {
+                    resolve({ status: 0, message: "No Booking Information" });  // Resolve with no information
+                }
+            })
+            .catch(err => {
+                helper.ThrowHtmlError(err);
+                reject(err);  // Reject on error
+            });
     });
-
 }
 
 function oneSignalPushFire(userType, token, title, message, messageDate = {}) {

@@ -1,0 +1,7 @@
+SyntaxError: Expected ',' or ']' after array element in JSON at position 76
+    at JSON.parse (<anonymous>)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:836:44
+    at Object.CheckParameterValid (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\helpers\helpers.js:69:20)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:833:20
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:1327:24
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

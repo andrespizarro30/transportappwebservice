@@ -1,0 +1,2 @@
+TypeError: Cannot read properties of undefined (reading 'recordsets')
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\support_controller.js:251:32

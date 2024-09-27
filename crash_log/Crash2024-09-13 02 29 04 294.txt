@@ -1,0 +1,4 @@
+ReferenceError: getConnection is not defined
+    at getUserDetailUserId (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\login_controller.js:133:9)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\login_controller.js:76:29
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

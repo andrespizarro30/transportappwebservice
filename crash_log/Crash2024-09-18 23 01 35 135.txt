@@ -1,0 +1,7 @@
+RequestError: Validation failed for parameter 'user_type'. Invalid string.
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\request.js:449:19
+    at Array.forEach (<anonymous>)
+    at Request.userCallback (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\mssql\lib\tedious\request.js:446:46)
+    at Request.callback (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\request.js:239:14)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\tedious\lib\connection.js:1634:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:77:11)

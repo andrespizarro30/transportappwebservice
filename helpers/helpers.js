@@ -3,13 +3,13 @@ var fs = require('fs');
 const { format } = require('path');
 
 const app_debug_mode = true;
-const timezone_name = "Asia/Kolkata";
+const timezone_name = "America/Bogota";
 const msg_server_internal_error = "Server Internal Error"
 
 module.exports = {
 
     ImagePath:() => {
-        return "http://192.168.10.14:3001/img/";
+        return "http://192.168.10.11:3001/img/";
     },
 
     ThrowHtmlError: (err, res) => {
@@ -143,7 +143,7 @@ module.exports = {
         var longitude = parseFloat(long);
         var distance_find = parseFloat(radius_km); // value is km convent 1 miles = 1.60934 km
         //Dlog("latitude : " + latitude+ "longitude : "+longitude +"distance_find : " +distance_find);
-        var radius = 6371;
+        var radius = 3000;
         var maxlat = latitude + ((distance_find / radius) * 180 / Math.PI);
         var minlat = latitude - ((distance_find / radius) * 180 / Math.PI);
         var maxlng = longitude + ((distance_find / radius / Math.cos(latitude * Math.PI / 180)) * 180 / Math.PI);

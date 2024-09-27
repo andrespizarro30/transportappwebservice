@@ -1,7 +1,44 @@
-var mysql = require('mysql')
+//var mysql = require('mysql')
+var mysql = require('mssql');
 var config = require('config')
 var dbConfig = config.get('dbConfig')
-var db = mysql.createConnection(dbConfig);
+//var db = mysql.createConnection(dbConfig);
+
+const dbSettings = {
+    user: 'andresp',
+    password: '123456',
+    server: '192.168.10.17',
+    port: 1433,
+    database: 'taxi_app',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
+
+// const dbSettings = {
+//     user: 'andrespizarro',
+//     password: 'Daniel20',
+//     server: 'andrespizarro.database.windows.net',
+//     port: 1433,
+//     database: 'DY_RFID_DataBase',
+//     "options":{
+//         "encrypt":true,
+//         "trustServerCertificate": true
+//     }
+// }
+
+async function getConnection(){
+    try{
+        const pool = await mysql.connect(dbSettings)
+        return pool;
+    }catch(error){
+        console.log(error)
+    }
+}
+
+var db = getConnection;
+
 var helper = require('./helpers')
 
 if(config.has('optionalFeature.detail')) {
@@ -11,10 +48,11 @@ if(config.has('optionalFeature.detail')) {
 
 reconnect(db, () => {});
 
-function reconnect(connection, callback) {
+async function reconnect(connection, callback) {
     helper.Dlog("\n New connection tentative ... (" + helper.serverYYYYMMDDHHmmss() + ")" )
 
-    connection = mysql.createConnection(dbConfig);
+    //connection = mysql.createConnection(dbConfig);
+    connection = await mysql.connect(dbSettings);
     connection.connect((err) => {
         if(err) {
             helper.ThrowHtmlError(err);

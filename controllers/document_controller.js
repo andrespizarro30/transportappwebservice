@@ -4,6 +4,32 @@ var multiparty = require('multiparty')
 var fs = require('fs');
 var imageSavePath = "./public/img/"
 
+var sql = require('mssql');
+
+const config = {
+    user: 'andresp',
+    password: '123456',
+    server: '192.168.10.17',
+    port: 1433,
+    database: 'taxi_app',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
+
+// const config = {
+//     user: 'andrespizarro',
+//     password: 'Daniel20',
+//     server: 'andrespizarro.database.windows.net',
+//     port: 1433,
+//     database: 'DY_RFID_DataBase',
+//     "options":{
+//         "encrypt":true,
+//         "trustServerCertificate": true
+//     }
+// }
+
 //User Type:
 const ut_admin = 4
 const ut_driver = 2
@@ -51,20 +77,28 @@ module.exports.controller = (app, io, socket_list) => {
                                 if (reqObj["user_car_id"][0] == "") {
                                     res.json({ "status": "1", "message": msg_doc_upload })
                                 } else {
-                                    db.query("INSERT INTO `zone_wise_doc_link`(`zone_doc_id`,`driver_doc_id`,`user_car_id`, `linked_date`) VALUES (?,?,?, NOW()) ", [reqObj.zone_doc_id[0], result, reqObj.user_car_id[0]], (err, result) => {
-                                        if (err) {
-                                            helper.ThrowHtmlError(err, res);
-                                            return
-                                        }
-                                        if (result) {
-                                            res.json({ "status": "1", "message": msg_doc_upload })
+                                    sql.connect(config).then((pool) => {
+                                        return pool
+                                            .request()
+                                            .input('zone_doc_id', sql.Int, reqObj.zone_doc_id[0])
+                                            .input('driver_doc_id', sql.Int, result)
+                                            .input('user_car_id', sql.Int, reqObj.user_car_id[0])
+                                            .query(`
+                                                INSERT INTO [zone_wise_doc_link]([zone_doc_id], [driver_doc_id], [user_car_id], [linked_date])
+                                                VALUES (@zone_doc_id, @driver_doc_id, @user_car_id, GETDATE());
+                                            `);
+                                    })
+                                    .then((result) => {
+                                        if (result.rowsAffected[0] > 0) {
+                                            res.json({ "status": "1", "message": msg_doc_upload });
                                         } else {
-                                            res.json({ "status": "0", "message": msg_fail })
+                                            res.json({ "status": "0", "message": msg_fail });
                                         }
                                     })
+                                    .catch((err) => {
+                                        helper.ThrowHtmlError(err, res);
+                                    });
                                 }
-
-
                             }
                         })
 
@@ -222,31 +256,48 @@ module.exports.controller = (app, io, socket_list) => {
 
         checkAccessToken(req.headers, res, (uObj) => {
 
-            db.query("SELECT `zl`.`zone_name`, `zl`.`zone_id`, `zld`.`zone_doc_id`, `zld`.`service_id`, `sd`.`service_name`, `zld`.`personal_doc`, `d`.`name`, `d`.`type`, `d`.`doc_id`, `dd`.`doc_image`, `dd`.`expiry_date`, `dd`.`status`, `dd`.`created_date`, `dd`.`driver_doc_id` FROM `user_detail` AS `ud` " +
-                "INNER JOIN `zone_list` AS `zl` ON `zl`.`zone_id` = `ud`.`zone_id` AND `zl`.`status` = 1 AND `ud`.`user_id` = ? " +
-                "INNER JOIN `zone_document` AS `zld` ON `zld`.`zone_id` = `zl`.`zone_id` AND FIND_IN_SET( `zld`.`service_id`, `ud`.`select_service_id` ) > 0 AND `zld`.`status` = 1 " +
-                "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `zld`.`service_id` AND `sd`.`status` = 1 " +
-                "INNER JOIN `document` AS `d` ON FIND_IN_SET( `d`.`doc_id`, `zld`.`personal_doc` ) > 0 AND `d`.`status` = 1 " +
-                "LEFT JOIN `driver_document` AS `dd` ON `dd`.`doc_id` = `d`.`doc_id` AND `dd`.`user_id` = `ud`.`user_id` AND `dd`.`status` != 1;", [uObj.user_id], (err, result) => {
-
-                    if (err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
-
-                    if (result.length > 0) {
-                        res.json({
-                            'status': '1',
-                            'payload': result
-                        })
-                    } else {
-                        res.json({
-                            'status': "0",
-                            "message": "Please select any one zone & any one provide service type"
-                        })
-                    }
-
-                })
+            sql.connect(config).then((pool) => {
+                return pool
+                    .request()
+                    .input('user_id', sql.Int, uObj.user_id)
+                    .query(`
+                        SELECT zl.[zone_name], zl.[zone_id], zld.[zone_doc_id], zld.[service_id], sd.[service_name], 
+                               zld.[personal_doc], d.[name], d.[type], d.[doc_id], dd.[doc_image], 
+                               dd.[expiry_date], dd.[status], dd.[created_date], dd.[driver_doc_id]
+                        FROM [user_detail] AS ud
+                        INNER JOIN [zone_list] AS zl ON zl.[zone_id] = ud.[zone_id] 
+                            AND zl.[status] = 1 
+                            AND ud.[user_id] = @user_id
+                        INNER JOIN [zone_document] AS zld ON zld.[zone_id] = zl.[zone_id] 
+                            AND CHARINDEX(CAST(zld.[service_id] AS VARCHAR), ud.[select_service_id]) > 0 
+                            AND zld.[status] = 1
+                        INNER JOIN [service_detail] AS sd ON sd.[service_id] = zld.[service_id] 
+                            AND sd.[status] = 1
+                        INNER JOIN [document] AS d ON CHARINDEX(CAST(d.[doc_id] AS VARCHAR), zld.[personal_doc]) > 0 
+                            AND d.[status] = 1
+                        LEFT JOIN [driver_document] AS dd ON dd.[doc_id] = d.[doc_id] 
+                            AND dd.[user_id] = ud.[user_id] 
+                            AND dd.[status] != 1;
+                    `);
+            })
+            .then((result) => {
+                const rows = result.recordset;
+        
+                if (rows.length > 0) {
+                    res.json({
+                        'status': '1',
+                        'payload': rows
+                    });
+                } else {
+                    res.json({
+                        'status': '0',
+                        'message': 'Please select any one zone & any one provide service type'
+                    });
+                }
+            })
+            .catch((err) => {
+                helper.ThrowHtmlError(err, res);
+            });
         })
 
 
@@ -258,35 +309,54 @@ module.exports.controller = (app, io, socket_list) => {
         var reqObj = req.body
         checkAccessToken(req.headers, res, (uObj) => {
             helper.CheckParameterValid(res, reqObj, ["user_car_id"], () => {
-                db.query("SELECT `zl`.`zone_name`, `zl`.`zone_id`, `zld`.`zone_doc_id`, `zld`.`service_id`, `sd`.`service_name`, `zld`.`personal_doc`, `d`.`name`, `d`.`type`, `d`.`doc_id`, `dd`.`doc_image`, `dd`.`expiry_date`, `dd`.`status`, `dd`.`created_date`, `dd`.`driver_doc_id`, `zwdl`.`zone_link_id`, `zwdl`.`doc_status` FROM `user_detail` AS `ud`" +
-                "INNER JOIN `zone_list` AS `zl` ON `zl`.`zone_id` = `ud`.`zone_id` AND `zl`.`status` = 1 AND `ud`.`user_id` = ? " +
-                "INNER JOIN `zone_document` AS `zld` ON `zld`.`zone_id` = `zl`.`zone_id` AND FIND_IN_SET ( `zld`.`service_id`, `ud`.`select_service_id` ) > 0 AND `zld`.`status` = 1 " +
-                "INNER JOIN `service_detail` AS `sd` ON `sd`.`service_id` = `zld`.`service_id` AND `sd`.`status` = 1 " +
-                "INNER JOIN `document` AS `d` ON FIND_IN_SET(`d`.`doc_id`, `zld`.`car_doc` ) > 0 AND `d`.`status` = 1 " +
-                "LEFT JOIN `zone_wise_doc_link` AS `zwdl` ON `zwdl`.`zone_doc_id` = `zld`.`zone_doc_id` AND `zwdl`.`user_car_id` = ? AND `zwdl`.`doc_status` != 1 " +
-                "LEFT JOIN `driver_document` AS `dd` ON `dd`.`driver_doc_id` = `zwdl`.`driver_doc_id` AND `dd`.`user_id` = `ud`.`user_id` AND `dd`.`status` != 1; ", [
-                    uObj.user_id,
-                    reqObj.user_car_id
-                ], (err, result) => {
 
-                    if(err) {
-                        helper.ThrowHtmlError(err, res);
-                        return
-                    }
-
-                    if(result.length > 0) {
+                sql.connect(config).then((pool) => {
+                    return pool
+                        .request()
+                        .input('user_id', sql.Int, uObj.user_id)
+                        .input('user_car_id', sql.Int, reqObj.user_car_id)
+                        .query(`
+                            SELECT zl.[zone_name], zl.[zone_id], zld.[zone_doc_id], zld.[service_id], sd.[service_name], 
+                                   zld.[personal_doc], d.[name], d.[type], d.[doc_id], dd.[doc_image], 
+                                   dd.[expiry_date], dd.[status], dd.[created_date], dd.[driver_doc_id], 
+                                   zwdl.[zone_link_id], zwdl.[doc_status]
+                            FROM [user_detail] AS ud
+                            INNER JOIN [zone_list] AS zl ON zl.[zone_id] = ud.[zone_id] 
+                                AND zl.[status] = 1 
+                                AND ud.[user_id] = @user_id
+                            INNER JOIN [zone_document] AS zld ON zld.[zone_id] = zl.[zone_id] 
+                                AND CHARINDEX(CAST(zld.[service_id] AS VARCHAR), ud.[select_service_id]) > 0 
+                                AND zld.[status] = 1
+                            INNER JOIN [service_detail] AS sd ON sd.[service_id] = zld.[service_id] 
+                                AND sd.[status] = 1
+                            INNER JOIN [document] AS d ON CHARINDEX(CAST(d.[doc_id] AS VARCHAR), zld.[car_doc]) > 0 
+                                AND d.[status] = 1
+                            LEFT JOIN [zone_wise_doc_link] AS zwdl ON zwdl.[zone_doc_id] = zld.[zone_doc_id] 
+                                AND zwdl.[user_car_id] = @user_car_id 
+                                AND zwdl.[doc_status] != 1
+                            LEFT JOIN [driver_document] AS dd ON dd.[driver_doc_id] = zwdl.[driver_doc_id] 
+                                AND dd.[user_id] = ud.[user_id] 
+                                AND dd.[status] != 1;
+                        `);
+                })
+                .then((result) => {
+                    const rows = result.recordset;
+            
+                    if (rows.length > 0) {
                         res.json({
-                            'status':'1',
-                            'payload': result
-                        })
-                    }else{
+                            'status': '1',
+                            'payload': rows
+                        });
+                    } else {
                         res.json({
-                            'status':"0",
-                            "message":"Please select any one zone & any one provide service type"
-                        })
+                            'status': '0',
+                            'message': 'Please select any one zone & any one provide service type'
+                        });
                     }
-
-                } )
+                })
+                .catch((err) => {
+                    helper.ThrowHtmlError(err, res);
+                });
             })
         })
 
@@ -430,7 +500,7 @@ module.exports.controller = (app, io, socket_list) => {
 
 }
 
-function documentUpload(doc_id, user_id, expriry_date, image, driver_doc_id, callback) {
+function documentUpload(doc_id, user_id, expiry_date, image, driver_doc_id, callback) {
     if (driver_doc_id == undefined || driver_doc_id == "") {
         //
         var extension = image.originalFilename.substring(image.originalFilename.lastIndexOf(".") + 1);
@@ -443,38 +513,64 @@ function documentUpload(doc_id, user_id, expriry_date, image, driver_doc_id, cal
             if (err) {
                 helper.ThrowHtmlError(err);
                 return callback(false, "document upload fail")
-
             } else {
+                sql.connect(config).then((pool) => {
+                    return pool
+                        .request()
+                        .input('doc_id', sql.Int, doc_id)
+                        .input('user_id', sql.Int, user_id)
+                        .input('doc_image', sql.VarChar, imageFileName)
+                        .input('expiry_date', sql.DateTime, expiry_date)
+                        .query(`
+                            INSERT INTO [driver_document] ([doc_id], [user_id], [doc_image], [expiry_date])
+                            VALUES (@doc_id, @user_id, @doc_image, @expiry_date);
+                            SELECT SCOPE_IDENTITY() AS driver_doc_id;
+                        `);
+                })
+                .then((result) => {
 
-                db.query("INSERT INTO `driver_document`( `doc_id`, `user_id`, `doc_image`, `expiry_date`) VALUES (?,?,?, ?)", [doc_id, user_id, imageFileName, expriry_date], (err, result) => {
-                    if (err) {
-                        helper.ThrowHtmlError(err);
-                        return callback(false, "document upload fail")
-                    }
+                    const driver_doc_id = result.recordset[0].driver_doc_id;
 
-                    if (result) {
-                        return callback(true, result.insertId)
+                    if (result.rowsAffected[0] > 0) {
+                        return callback(true, driver_doc_id);
                     } else {
-                        return callback(false, "document upload fail")
+                        return callback(false, "document upload fail");
                     }
                 })
+                .catch((err) => {
+                    helper.ThrowHtmlError(err);
+                    return callback(false, "document upload fail");
+                });
             }
         })
     } else {
-        db.query("SELECT * FROM `driver_document` WHERE `driver_doc_id` = ? AND `user_id` = ? AND `doc_id` = ? ", [driver_doc_id, user_id, doc_id], (err, result) => {
-            if (err) {
-                helper.ThrowHtmlError(err);
-                return callback(true, "document upload fail")
-
-            } else {
-                if (result.length > 0) {
-                    return callback(true, result[0].driver_doc_id)
-                } else {
-                    return callback(false, "invalid document")
-                }
-            }
-
+        sql.connect(config).then((pool) => {
+            return pool
+                .request()
+                .input('driver_doc_id', sql.Int, driver_doc_id)
+                .input('user_id', sql.Int, user_id)
+                .input('doc_id', sql.Int, doc_id)
+                .query(`
+                    SELECT * 
+                    FROM [driver_document] 
+                    WHERE [driver_doc_id] = @driver_doc_id 
+                    AND [user_id] = @user_id 
+                    AND [doc_id] = @doc_id;
+                `);
         })
+        .then((result) => {
+            const rows = result.recordset;
+    
+            if (rows.length > 0) {
+                return callback(true, rows[0].driver_doc_id);
+            } else {
+                return callback(false, "invalid document");
+            }
+        })
+        .catch((err) => {
+            helper.ThrowHtmlError(err);
+            return callback(true, "document upload fail");
+        });    
     }
 }
 
@@ -482,29 +578,40 @@ function documentUpload(doc_id, user_id, expriry_date, image, driver_doc_id, cal
 function checkAccessToken(helperObj, res, callback, requireType = "") {
     helper.Dlog(helperObj.access_token)
     helper.CheckParameterValid(res, helperObj, ["access_token"], () => {
-        db.query('SELECT `user_id`, `name`, `email`, `gender`, `mobile`, `mobile_code`, `auth_token`,  `user_type`, `is_block`,  `image`, `status` FROM `user_detail` WHERE  `auth_token` = ? AND (`status` = ? OR `status` = ?) ', [helperObj.access_token, "1", "2"], (err, result) => {
 
+        const query = `SELECT [user_id], [name], [email], [gender], [mobile], [mobile_code], [auth_token], [user_type], [is_block], [image], [status]
+               FROM [user_detail]
+               WHERE [auth_token] = @authToken AND ([status] = @status1 OR [status] = @status2)`;
+
+        const request = new sql.Request();
+        request.input('authToken', sql.VarChar, helperObj.access_token);
+        request.input('status1', sql.VarChar, '1');
+        request.input('status2', sql.VarChar, '2');
+
+        request.query(query, (err, result) => {
             if (err) {
                 helper.ThrowHtmlError(err);
-                return
+                return;
             }
 
-            helper.Dlog(result)
+            const rows = result.recordset;
 
-            if (result.length > 0) {
-                if (requireType != "") {
-                    if (requireType == result[0].user_type) {
-                        return callback(result[0])
+            helper.Dlog(rows);
+
+            if (rows.length > 0) {
+                if (requireType !== "") {
+                    if (requireType == rows[0].user_type) {
+                        return callback(rows[0]);
                     } else {
-                        res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." })
+                        res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." });
                     }
                 } else {
-                    return callback(result[0])
+                    return callback(rows[0]);
                 }
-
             } else {
-                res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." })
+                res.json({ "status": "0", "code": "404", "message": "Access denied. Unauthorized user access." });
             }
-        })
+        });
+
     })
 }

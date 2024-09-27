@@ -1,0 +1,8 @@
+ReferenceError: sql is not defined
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\sockect_controller.js:17:17
+    at Object.CheckParameterValidSocket (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\helpers\helpers.js:93:20)
+    at Socket.<anonymous> (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\sockect_controller.js:16:20)
+    at Socket.emit (node:events:519:28)
+    at Socket.emitUntyped (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\socket.io\dist\typed-events.js:69:22)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\socket.io\dist\socket.js:703:39
+    at process.processTicksAndRejections (node:internal/process/task_queues:77:11)

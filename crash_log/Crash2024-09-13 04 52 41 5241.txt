@@ -1,0 +1,5 @@
+ReferenceError: path is not defined
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\cars_controller.js:988:31
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)ReferenceError: msg_fail is not defined
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\cars_controller.js:1025:42
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
