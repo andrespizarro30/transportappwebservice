@@ -1,0 +1,5 @@
+ReferenceError: XMLHttpRequest is not defined
+    at oneSignalPushFire (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:2152:19)
+    at driverSendRequestFire (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:1690:9)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:1553:19
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

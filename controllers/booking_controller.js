@@ -3,14 +3,18 @@ var helper = require('./../helpers/helpers')
 var multiparty = require('multiparty')
 var fs = require('fs');
 const { duration } = require('moment-timezone');
-var imageSavePath = "./public/img/"
+var imageSavePath = "./public/img/";
+
+const { GoogleAuth } = require('google-auth-library');
+
+const XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest;
 
 var sql = require('mssql');
 
 const config = {
     user: 'andresp',
     password: '123456',
-    server: '192.168.10.10',
+    server: '192.168.10.12',
     port: 1433,
     database: 'taxi_app',
     "options":{
@@ -220,7 +224,7 @@ module.exports.controller = (app, io, socket_list) => {
                                   res.json({
                                     status: '1',
                                     payload: finalResult.recordset[0],
-                                    message: 'booking request send successfully',
+                                    message: 'booking request sent successfully',
                                   });
                                 } else {
                                   res.json({
@@ -253,7 +257,7 @@ module.exports.controller = (app, io, socket_list) => {
     })
 
     app.post('/api/update_location', (req, res) => {
-        helper.Dlog(req.body);
+        //helper.Dlog(req.body);
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (uObj) => {
@@ -287,6 +291,23 @@ module.exports.controller = (app, io, socket_list) => {
                             'status': "1",
                             "message": msg_success
                         });
+
+                        const response = {
+                            "status": "1",
+                            "payload": {
+                                "user_id": parseInt(uObj.user_id),
+                                "latitude": reqObj.latitude == '0.0' ? 0.0 : parseFloat(reqObj.latitude),
+                                "longitude": reqObj.longitude == '0.0' ? 0.0 : parseFloat(reqObj.longitude)
+                            },
+                        };
+
+                        helper.Dlog(response);
+
+                        Object.entries(controllerSocketList).forEach(([key, value]) => {
+                            helper.Dlog(value.socket_id);
+                            controllerIO.sockets.sockets.get(value.socket_id).emit("drivers_location", response);
+                        });                        
+
                     } else {
                         res.json({
                             'status': "0",
@@ -1302,7 +1323,7 @@ module.exports.controller = (app, io, socket_list) => {
                         SUM(CASE WHEN bd.booking_id IS NOT NULL AND pd.payment_type = 1 THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS cash_amt, 
                         SUM(CASE WHEN bd.booking_id IS NOT NULL AND pd.payment_type = 2 THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS online_amt 
                     FROM booking_detail AS bd
-                    INNER JOIN payment_detail AS pd ON bd.payment_id = pd.payment_id AND bd.booking_status = 5 AND bd.driver_id = 17
+                    INNER JOIN payment_detail AS pd ON bd.payment_id = pd.payment_id AND bd.booking_status = 5 AND bd.driver_id = @driver_id
                     AND CAST(bd.start_time AS DATE) <= CAST(GETDATE() AS DATE) AND CAST(bd.start_time AS DATE) >= DATEADD(DAY, -7, GETDATE())
                     RIGHT JOIN (
                         SELECT CAST(DATEADD(DAY, -C.daynum, GETDATE()) AS DATE) AS date 
@@ -1358,6 +1379,53 @@ module.exports.controller = (app, io, socket_list) => {
 
     } )
 
+    app.post('/api/driver_summary_daily_amount', (req, res) => {
+
+        helper.Dlog(req.body)
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (uObj) => {
+            const sqlQuery = `
+                    SELECT dt.date, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL THEN 1 ELSE 0 END) AS trips_count, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS total_amt, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL AND pd.payment_type = 1 THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS cash_amt, 
+                        SUM(CASE WHEN bd.booking_id IS NOT NULL AND pd.payment_type = 2 THEN CAST(pd.amt AS FLOAT) ELSE 0.0 END) AS online_amt 
+                    FROM booking_detail AS bd
+                    INNER JOIN payment_detail AS pd ON bd.payment_id = pd.payment_id AND bd.booking_status = 5 AND bd.driver_id = @driver_id
+                    AND CAST(bd.start_time AS DATE) <= CAST(GETDATE() AS DATE) AND CAST(bd.start_time AS DATE) >= DATEADD(DAY, -7, GETDATE())
+                    RIGHT JOIN (
+                        SELECT CAST(DATEADD(DAY, -C.daynum, GETDATE()) AS DATE) AS date 
+                        FROM ( 
+                            SELECT t * 10 + u AS daynum 
+                            FROM (SELECT 0 AS t UNION SELECT 1 UNION SELECT 2 UNION SELECT 3) AS A, 
+                            (SELECT 0 AS u UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) AS B
+                        ) AS C 
+                        WHERE C.daynum < 1 
+                    ) AS dt ON dt.date = CAST(bd.start_time AS DATE) 
+                    GROUP BY dt.date
+					ORDER BY date;
+                `;
+
+                sql.connect(config).then(pool => {
+                    return pool.request()
+                        .input('driver_id', sql.Int, uObj.user_id)
+                        .query(sqlQuery);
+                }).then(result => {
+                    const totalAmt = result.recordsets[0].reduce((total, obj) => total + parseFloat(obj.amt), 0);
+                    const cashAmt = result.recordsets[0].reduce((total, obj) => obj.payment_type === 1 ? total + parseFloat(obj.amt) : total, 0);
+                    const onlineAmt = result.recordsets[0].reduce((total, obj) => obj.payment_type === 2 ? total + parseFloat(obj.amt) : total, 0);
+
+                    res.json({
+                        'status': "1",
+                        "payload": result.recordsets[0]
+                    });
+                }).catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
+        }, ut_driver)
+
+    } )
     
 
 }
@@ -1376,7 +1444,7 @@ function removeDriverWaitUser(booking_id) {
 }
 
 function checkAccessToken(helperObj, res, callback, requireType = "") {
-    helper.Dlog(helperObj.access_token)
+    //helper.Dlog(helperObj.access_token)
     helper.CheckParameterValid(res, helperObj, ["access_token"], () => {
         sql.connect(config).then((pool) => {
             return pool
@@ -1396,7 +1464,7 @@ function checkAccessToken(helperObj, res, callback, requireType = "") {
             const user = result.recordset;
         
             if (user.length > 0) {
-              helper.Dlog(user);
+              //helper.Dlog(user);
         
               if (requireType !== "") {
                 if (requireType == user[0].user_type) {
@@ -1458,6 +1526,7 @@ function driverNewRequestSend(bookingDetail, callback) {
                   AND zwcs.zone_doc_id = zd.zone_doc_id
                 WHERE ud.user_type = 2 
                   AND ud.status >= 1 
+                  AND ud.is_online = 1 
                   AND ud.is_request_send = 0 
                   AND zwcs.expiry_date >= @pickup_date 
                   AND zwcs.status = 1 
@@ -1703,7 +1772,7 @@ function driverNewRequestSendByBookingID(bookingID) {
             SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, 
                    bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, 
                    bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, 
-                   bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, 
+                   bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, bd.accpet_driver_id, pd.zone_id, pd.mini_km, 
                    sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, 
                    (CASE WHEN ud.image != '' THEN CONCAT('` + helper.ImagePath() + `', ud.image) ELSE '' END) AS image, 
                    ppd.amt, ppd.driver_amt, ppd.payment_type 
@@ -2062,18 +2131,101 @@ function bookingInformationDetail(booking_id, user_type) {
             })
             .then(result => {
                 if (result.recordset.length > 0) {
-                    resolve(result.recordset);  // Resolve with booking details
+                    resolve(result.recordset);
                 } else {
-                    resolve({ status: 0, message: "No Booking Information" });  // Resolve with no information
+                    resolve({ status: 0, message: "No Booking Information" });
                 }
             })
             .catch(err => {
                 helper.ThrowHtmlError(err);
-                reject(err);  // Reject on error
+                reject(err);
             });
     });
 }
 
-function oneSignalPushFire(userType, token, title, message, messageDate = {}) {
+async function oneSignalPushFire(userType, token, title, message, messageData = {}) {
 
+    messageData = convertValuesToString(messageData);
+
+    const accessToken = await getAccessToken();
+    const fcmUrl = 'https://fcm.googleapis.com/v1/projects/plataformatransporte-b20ba/messages:send';
+
+    const payload = JSON.stringify({
+        message: {
+            token: ""+ token +"",
+            notification: {
+                title: ""+ title +"",
+                body: ""+ message +""
+            },
+            data : messageData,
+            android: {
+                priority: "high"
+            },
+            apns: {
+                headers: {
+                    "apns-priority": "10"
+                },
+                payload: {
+                aps: {
+                    alert: {
+                    title: "Test Notification",
+                    body: "This is a test message"
+                    },
+                    sound: "default",
+                    badge: 1
+                }
+                }
+            }
+        }
+    });
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.open('POST', fcmUrl, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+
+    xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            helper.Dlog('Successfully sent message:', xhr.responseText);
+        } else {
+            console.error('Error sending message:', xhr.responseText);
+        }
+    };
+
+    xhr.onerror = function () {
+        console.error('Request failed');
+    };
+
+    xhr.send(payload);
+}
+
+async function getAccessToken() {
+
+    const SCOPES = ['https://www.googleapis.com/auth/firebase.messaging'];
+
+    const auth = new GoogleAuth({
+        keyFile: './helpers/plataformatransporte-b20ba-firebase-adminsdk-sldmg-37ecfb78f8.json',
+        scopes: SCOPES
+    });
+
+    const accessToken = await auth.getAccessToken();
+    return accessToken;
+}
+
+function convertValuesToString(messageData) {
+    
+    function recursiveStringify(messageData) {
+        for (let key in messageData) {
+            if (typeof messageData[key] === 'object' && messageData[key] !== null) {
+                recursiveStringify(messageData[key]);
+            } else {
+                messageData[key] = String(messageData[key]);
+            }
+        }
+    }
+
+    recursiveStringify(messageData);
+
+    return messageData;
 }

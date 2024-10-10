@@ -5,7 +5,7 @@ var sql = require('mssql');
 const config = {
     user: 'andresp',
     password: '123456',
-    server: '192.168.10.10',
+    server: '192.168.10.12',
     port: 1433,
     database: 'taxi_app',
     "options":{

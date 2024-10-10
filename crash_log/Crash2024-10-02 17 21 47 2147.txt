@@ -1,0 +1,23 @@
+ReferenceError: userSocket is not defined
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:302:62
+    at Array.forEach (<anonymous>)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:300:62
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client
+    at ServerResponse.setHeader (node:_http_outgoing:659:11)
+    at ServerResponse.header (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\express\lib\response.js:794:10)
+    at ServerResponse.send (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\express\lib\response.js:174:12)
+    at ServerResponse.json (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\express\lib\response.js:278:15)
+    at Object.ThrowHtmlError (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\helpers\helpers.js:27:17)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:313:28
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)ReferenceError: userSocket is not defined
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:302:62
+    at Array.forEach (<anonymous>)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:300:62
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client
+    at ServerResponse.setHeader (node:_http_outgoing:659:11)
+    at ServerResponse.header (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\express\lib\response.js:794:10)
+    at ServerResponse.send (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\express\lib\response.js:174:12)
+    at ServerResponse.json (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\node_modules\express\lib\response.js:278:15)
+    at Object.ThrowHtmlError (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\helpers\helpers.js:27:17)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:313:28
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

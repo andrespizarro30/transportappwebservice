@@ -1,0 +1,6 @@
+TypeError: Cannot read properties of undefined (reading 'auth')
+    at getAccessToken (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:2184:29)
+    at oneSignalPushFire (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:2144:31)
+    at driverSendRequestFire (C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:1693:9)
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\booking_controller.js:1556:19
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

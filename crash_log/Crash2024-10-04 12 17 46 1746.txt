@@ -1,0 +1,3 @@
+ReferenceError: res is not defined
+    at C:\Users\HP\Desktop\Transport App - Bloc\back_end\taxi_driver_node\controllers\stats_controller.js:64:36
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

@@ -9,7 +9,7 @@ var sql = require('mssql');
 const config = {
     user: 'andresp',
     password: '123456',
-    server: '192.168.10.10',
+    server: '192.168.10.12',
     port: 1433,
     database: 'taxi_app',
     "options":{
@@ -1133,6 +1133,38 @@ module.exports.controller = (app, io, socket_list) => {
             })
 
         }, ut_admin)
+    })
+
+    app.post('/api/updatepushtoken', (req, res) => {
+        helper.Dlog(req.body)
+        var reqObj = req.body
+        checkAccessToken(req.headers, res, (uObj) => {
+
+            helper.CheckParameterValid(res, reqObj, ["push_token"], () => {
+                sql.connect(config).then(pool => {
+                    // Execute the update query
+                    return pool.request()
+                        .input('push_token', sql.VarChar, reqObj.push_token)
+                        .input('user_id', sql.Int, uObj.user_id)
+                        .query('UPDATE user_detail SET push_token = @push_token WHERE user_id = @user_id');
+                }).then(result => {
+                    if (result.rowsAffected[0] > 0) {
+                        res.json({
+                            "status": "1",
+                            "message": "push token updated correctly"
+                        });
+                    } else {
+                        res.json({
+                            "status": "0",
+                            "message": "Failed to update push token"
+                        });
+                    }
+                }).catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
+            })
+
+        })
     })
 
 }
