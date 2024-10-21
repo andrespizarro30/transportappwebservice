@@ -6,29 +6,29 @@ var imageSavePath = "./public/img/"
 
 var sql = require('mssql');
 
-const config = {
-    user: 'andresp',
-    password: '123456',
-    server: '192.168.10.12',
-    port: 1433,
-    database: 'taxi_app',
-    "options":{
-        "encrypt":true,
-        "trustServerCertificate": true
-    }
-}
-
 // const config = {
-//     user: 'andrespizarro',
-//     password: 'Daniel20',
-//     server: 'andrespizarro.database.windows.net',
+//     user: 'andresp',
+//     password: '123456',
+//     server: '192.168.10.11',
 //     port: 1433,
-//     database: 'DY_RFID_DataBase',
+//     database: 'taxi_app',
 //     "options":{
 //         "encrypt":true,
 //         "trustServerCertificate": true
 //     }
 // }
+
+const config = {
+    user: 'andrespizarro',
+    password: 'Daniel20',
+    server: 'andrespizarro.database.windows.net',
+    port: 1433,
+    database: 'DY_RFID_DataBase',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
 
 //User Type:
 const ut_admin = 4
@@ -42,8 +42,16 @@ module.exports.controller = (app, io, socket_list) => {
     const msg_invalidUser = "invalid username";
 
     app.get('/api/sayhi',(req,res)=>{
-        res.json({ "greeting": "Hello worlds"});
+        res.json({ "greeting": "Hello world 123"});
     })
+      
+    app.get('/api/seeport',(req,res)=>{
+        res.json(`The port is: ${app.get('port')}`);
+    })
+
+    app.get('/test', (req, res) => {
+        res.send("Test route working!");
+    });
 
     app.post('/api/login', (req, res) => {
         helper.Dlog(req.body);

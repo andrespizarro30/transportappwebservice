@@ -2,29 +2,29 @@ var helper = require('./../helpers/helpers')
 //var db = require('./../helpers/db_helpers')
 var sql = require('mssql');
 
-const config = {
-    user: 'andresp',
-    password: '123456',
-    server: '192.168.10.12',
-    port: 1433,
-    database: 'taxi_app',
-    "options":{
-        "encrypt":true,
-        "trustServerCertificate": true
-    }
-}
-
 // const config = {
-//     user: 'andrespizarro',
-//     password: 'Daniel20',
-//     server: 'andrespizarro.database.windows.net',
+//     user: 'andresp',
+//     password: '123456',
+//     server: '192.168.10.11',
 //     port: 1433,
-//     database: 'DY_RFID_DataBase',
+//     database: 'taxi_app',
 //     "options":{
 //         "encrypt":true,
 //         "trustServerCertificate": true
 //     }
 // }
+
+const config = {
+    user: 'andrespizarro',
+    password: 'Daniel20',
+    server: 'andrespizarro.database.windows.net',
+    port: 1433,
+    database: 'DY_RFID_DataBase',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
 
 module.exports.controller = (app, io, socket_list) => {
     var response = '';

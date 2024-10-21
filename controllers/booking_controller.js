@@ -11,29 +11,29 @@ const XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest;
 
 var sql = require('mssql');
 
-const config = {
-    user: 'andresp',
-    password: '123456',
-    server: '192.168.10.12',
-    port: 1433,
-    database: 'taxi_app',
-    "options":{
-        "encrypt":true,
-        "trustServerCertificate": true
-    }
-}
-
 // const config = {
-//     user: 'andrespizarro',
-//     password: 'Daniel20',
-//     server: 'andrespizarro.database.windows.net',
+//     user: 'andresp',
+//     password: '123456',
+//     server: '192.168.10.11',
 //     port: 1433,
-//     database: 'DY_RFID_DataBase',
+//     database: 'taxi_app',
 //     "options":{
 //         "encrypt":true,
 //         "trustServerCertificate": true
 //     }
 // }
+
+const config = {
+    user: 'andrespizarro',
+    password: 'Daniel20',
+    server: 'andrespizarro.database.windows.net',
+    port: 1433,
+    database: 'DY_RFID_DataBase',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
 
 //Booking Status
 
@@ -101,6 +101,182 @@ module.exports.controller = (app, io, socket_list) => {
 
     //Check Per Pending Request  8:45 to 9:15 
     //Booking Time = 9:00 
+
+    app.post('/api/booking_request_individual', (req, res) => {
+        helper.Dlog(req.body);
+        var reqObj = req.body;
+        checkAccessToken(req.headers, res, (uObj) => {
+            helper.CheckParameterValid(res, reqObj, ["pickup_latitude", "pickup_longitude", "pickup_address", "drop_latitude", "drop_longitude", "drop_address", "pickup_date", "payment_type", "card_id", "price_id", "est_total_distance", 'est_duration', 'amount', "service_id"], () => {
+
+                helper.Dlog(" Date Time:  " + helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", -newRequestTimeABC) + " , " + helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", newRequestTimeABC));
+                
+                sql.connect(config).then((pool) => {
+                    return pool
+                      .request()
+                      .input('user_id', sql.Int, uObj.user_id)
+                      .input('pickup_start', sql.DateTime, helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", -newRequestTimeABC))
+                      .input('pickup_end', sql.DateTime, helper.serverDateTimeAddMin(reqObj.pickup_date, "YYYY-MM-DD HH:mm:ss", newRequestTimeABC))
+                      .input('booking_status', sql.Int, bs_complete)
+                      .input('price_id', sql.Int, reqObj.price_id)
+                      .query(
+                        `SELECT COUNT(*) AS booking_count 
+                        FROM booking_detail 
+                        WHERE user_id = @user_id 
+                        AND (pickup_date BETWEEN @pickup_start AND @pickup_end) 
+                        AND booking_status < @booking_status;
+                
+                        SELECT pd.base_charge, pd.booking_charge, zl.tax, pd.per_km_charge, 
+                        pd.per_min_charge, pd.mini_fair, pd.mini_km, pd.cancel_charge 
+                        FROM price_detail AS pd 
+                        INNER JOIN zone_list AS zl ON zl.zone_id = pd.zone_id 
+                        WHERE pd.price_id = @price_id;`
+                      );
+                  })
+                  .then((result) => {
+                    const bookingCount = result.recordsets[0][0].booking_count;
+                    const priceDetails = result.recordsets[1];
+                
+                    if (bookingCount === 0) {
+                      if (priceDetails.length > 0) {
+                        const amount = parseInt(reqObj.amount);
+                        const totalAmount = (amount * 100) / (100 + parseInt(priceDetails[0].tax));
+                        const taxAmount = (amount - totalAmount).toFixed(3);
+                        const driverAmount = (
+                          (totalAmount - parseFloat(priceDetails[0].booking_charge)) * 
+                          (1 - rideCommissionVal / 100.0)
+                        ).toFixed(2);
+                        const rideCommission = (totalAmount - driverAmount).toFixed(2);
+                
+                        helper.Dlog([reqObj.card_id, reqObj.payment_type, amount, 0, driverAmount, taxAmount, rideCommission]);
+                
+                        return sql
+                          .connect(config)
+                          .then((pool) => {
+                            return pool
+                              .request()
+                              .input('card_id', sql.Int, reqObj.card_id)
+                              .input('payment_type', sql.VarChar, reqObj.payment_type)
+                              .input('amt', sql.Decimal, amount)
+                              .input('discount_amt', sql.Decimal, 0)
+                              .input('driver_amt', sql.Decimal, driverAmount)
+                              .input('tax_amt', sql.Decimal, taxAmount)
+                              .input('ride_commission', sql.Decimal, rideCommission)
+                              .input('front_pay_amount', sql.Decimal, 0)
+                              .query(
+                                `INSERT INTO payment_detail (card_id, payment_type, amt, discount_amt, driver_amt, tax_amt, ride_commission, created_date, modify_date,front_pay_amount)
+                                 VALUES (@card_id, @payment_type, @amt, @discount_amt, @driver_amt, @tax_amt, @ride_commission, GETDATE(), GETDATE(),@front_pay_amount);
+                                 SELECT SCOPE_IDENTITY() AS payment_id;`
+                              );
+                          })
+                          .then((pResult) => {
+                            const paymentId = pResult.recordset[0].payment_id;
+                
+                            return sql
+                              .connect(config)
+                              .then((pool) => {
+                                return pool
+                                  .request()
+                                  .input('user_id', sql.Int, uObj.user_id)
+                                  .input('pickup_lat', sql.Float, reqObj.pickup_latitude)
+                                  .input('pickup_long', sql.Float, reqObj.pickup_longitude)
+                                  .input('pickup_address', sql.VarChar, reqObj.pickup_address)
+                                  .input('drop_lat', sql.Float, reqObj.drop_latitude)
+                                  .input('drop_long', sql.Float, reqObj.drop_longitude)
+                                  .input('drop_address', sql.VarChar, reqObj.drop_address)
+                                  .input('pickup_date', sql.DateTime, reqObj.pickup_date)
+                                  .input('service_id', sql.Int, reqObj.service_id)
+                                  .input('price_id', sql.Int, reqObj.price_id)
+                                  .input('payment_id', sql.Int, paymentId)
+                                  .input('est_total_distance', sql.Float, reqObj.est_total_distance)
+                                  .input('est_duration', sql.Float, reqObj.est_duration)
+                                  .query(
+                                    `INSERT INTO booking_detail (user_id, pickup_lat, pickup_long, pickup_address, drop_lat, drop_long, drop_address, pickup_date, service_id, price_id, payment_id, est_total_distance, est_duration, created_date)
+                                    VALUES (@user_id, @pickup_lat, @pickup_long, @pickup_address, @drop_lat, @drop_long, @drop_address, '${reqObj.pickup_date}', @service_id, @price_id, @payment_id, @est_total_distance, @est_duration, GETDATE());
+                                    SELECT SCOPE_IDENTITY() AS booking_id;`
+                                  );
+                              });
+                          })
+                          .then((bookingResult) => {
+
+                            const bookingId = bookingResult.recordset[0].booking_id;
+                
+                            return sql
+                              .connect(config)
+                              .then((pool) => {
+                                return pool
+                                  .request()
+                                  .input('booking_id', sql.Int, bookingId)
+                                  .input('booking_status', sql.Int, bs_pending)
+                                  .query(
+                                    `SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, (CASE WHEN ud.image != '' THEN CONCAT( '${helper.ImagePath()}', ud.image ) ELSE '' END) AS image, ppd.amt, ppd.driver_amt, ppd.payment_type 
+                                    FROM booking_detail AS bd 
+                                    INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id 
+                                    INNER JOIN price_detail AS pd ON pd.price_id = bd.price_id 
+                                    INNER JOIN payment_detail AS ppd ON ppd.payment_id = bd.payment_id 
+                                    INNER JOIN service_detail AS sd ON bd.service_id = sd.service_id 
+                                    WHERE bd.booking_id = @booking_id AND bd.booking_status = @booking_status;`
+                                  );
+                              });
+                          })
+                          .then((finalResult) => {
+                            if (finalResult.recordset.length > 0) {
+                                driversList(finalResult.recordset[0], (status, driversList) => {
+                                    if (status == 1) {
+                                      res.json({
+                                        status: '1',
+                                        driverslist: driversList,
+                                        payload: finalResult.recordset[0],
+                                        message: 'available drivers list',
+                                      });
+                                    } else {
+                                      res.json({
+                                        status: '2',
+                                        message: 'no available drivers',
+                                      });
+                                    }
+                                  });                              
+                            } else {
+                              res.json({ status: '0', message: 'Booking info not found' });
+                            }
+                          })
+                          .catch((err) => {
+                            helper.ThrowHtmlError(err, res);
+                          });
+                      } else {
+                        res.json({ status: '0', message: 'invalid service' });
+                      }
+                    } else {
+                      res.json({ status: '0', message: msg_all_ready_book });
+                    }
+                  })
+                  .catch((err) => {
+                    helper.ThrowHtmlError(err, res);
+                  });  
+
+            })
+        })
+    })
+
+    app.post('/api/call_driver_individual', (req, res) => {
+        helper.Dlog(req.body);
+        var reqObj = req.body;
+        checkAccessToken(req.headers, res, (uObj) => {
+            const driverSocket = controllerSocketList['us_' + reqObj.driver_id];
+            if (driverSocket && controllerIO.sockets.sockets.get(driverSocket.socket_id)) {
+                driverSendRequestFireIndividual(reqObj,(bookingDetails)=>{
+                    const response = {
+                        status: "1",
+                        payload: [bookingDetails],
+                      };
+                    controllerIO.sockets.sockets.get(driverSocket.socket_id).emit("new_ride_request", response);
+                    res.json({
+                        status: '1',
+                        message: 'booking request sent successfully'
+                    });
+                });
+            }
+        })
+    })
 
     app.post('/api/booking_request', (req, res) => {
         helper.Dlog(req.body);
@@ -1381,6 +1557,8 @@ module.exports.controller = (app, io, socket_list) => {
 
     app.post('/api/driver_summary_daily_amount', (req, res) => {
 
+        helper.Dlog("GETTING AMOUNTS");
+
         helper.Dlog(req.body)
         var reqObj = req.body;
 
@@ -1415,6 +1593,8 @@ module.exports.controller = (app, io, socket_list) => {
                     const totalAmt = result.recordsets[0].reduce((total, obj) => total + parseFloat(obj.amt), 0);
                     const cashAmt = result.recordsets[0].reduce((total, obj) => obj.payment_type === 1 ? total + parseFloat(obj.amt) : total, 0);
                     const onlineAmt = result.recordsets[0].reduce((total, obj) => obj.payment_type === 2 ? total + parseFloat(obj.amt) : total, 0);
+
+                    helper.Dlog(result.recordsets[0]);
 
                     res.json({
                         'status': "1",
@@ -1492,6 +1672,141 @@ function checkAccessToken(helperObj, res, callback, requireType = "") {
           });
   
     })
+}
+
+function driversList(bookingDetail, callback) {
+    //`bd`.`pickup_lat`, `bd`.`pickup_long`,
+    var latitude = parseFloat(bookingDetail.pickup_lat)
+    var longitude = parseFloat(bookingDetail.pickup_long)
+
+    helper.findNearByLocation(latitude, longitude, 3, (minLat, maxLat, minLng, maxLng) => {
+        var allReadySendRequest = bookingDetail.request_driver_id
+        if (allReadySendRequest == "") {
+            allReadySendRequest = "''"
+        }
+
+        sql.connect(config).then((pool) => {
+            return pool
+              .request()
+              .input('service_id', sql.Int, bookingDetail.service_id)
+              .input('price_id', sql.Int, bookingDetail.price_id)
+              .input('pickup_date', sql.VarChar, helper.serverMySqlDate(bookingDetail.pickup_date, 'YYYY-MM-DD'))
+              .input('pickup_date_with_time', sql.VarChar, helper.serverMySqlDate(bookingDetail.pickup_date, 'YYYY-MM-DD HH:mm:ss'))
+              .input('pickup_date_with_time_adjusted', sql.VarChar, helper.serverDateTimeAddMin(bookingDetail.pickup_date, 'YYYY-MM-DD HH:mm:ss', newRequestTimeABC))
+              .input('bs_complete', sql.Int, bs_complete)
+              .query(`
+                SELECT ud.user_id, ud.device_source, ud.push_token, ud.lati, ud.longi, 
+                uc.car_number, cs.series_name, cb.brand_name, cm.model_name, 
+                (CASE WHEN uc.car_image != '' THEN CONCAT( '${helper.ImagePath()}', uc.car_image ) ELSE '' END) AS car_image
+                FROM user_detail AS ud
+                INNER JOIN zone_document AS zd ON zd.zone_id = ud.zone_id 
+                  AND zd.service_id = @service_id 
+                  AND CHARINDEX(CAST(zd.service_id AS NVARCHAR), ud.select_service_id) != 0
+                INNER JOIN price_detail AS pm ON pm.zone_id = zd.zone_id 
+                  AND pm.price_id = @price_id
+                INNER JOIN zone_wise_cars_service AS zwcs ON ud.car_id = zwcs.user_car_id 
+                  AND zwcs.zone_doc_id = zd.zone_doc_id
+                INNER JOIN user_cars AS uc ON ud.car_id = uc.user_car_id
+				INNER JOIN car_series AS cs ON uc.series_id = cs.series_id 
+				INNER JOIN car_brand AS cb ON cs.brand_id = cb.brand_id 
+				INNER JOIN car_model AS cm ON cs.model_id = cm.model_id
+                WHERE ud.user_type = 2 
+                  AND ud.status >= 1 
+                  AND ud.is_online = 1 
+                  AND ud.is_request_send = 0 
+                  AND zwcs.expiry_date >= @pickup_date 
+                  AND zwcs.status = 1 
+                  AND zwcs.service_provide = 1 
+                  AND (CAST(ud.lati AS FLOAT) BETWEEN ${minLat} AND ${maxLat}) 
+                  AND (CAST(ud.longi AS FLOAT) BETWEEN ${minLng} AND ${maxLng}) 
+                  AND ud.user_id NOT IN (${allReadySendRequest}) 
+                  AND ud.user_id NOT IN (
+                    SELECT driver_id 
+                    FROM booking_detail 
+                    WHERE pickup_date BETWEEN @pickup_date_with_time AND @pickup_date_with_time_adjusted 
+                      AND booking_status < @bs_complete
+                    GROUP BY driver_id
+                  )
+              `);
+          })
+          .then((result) => {
+            const drivers = result.recordset;
+        
+            if (drivers.length > 0) {
+              drivers.forEach((driverInfo, index) => {
+                drivers[index].distance = helper.distance(latitude, longitude, driverInfo.lati, driverInfo.longi);
+              });
+        
+              drivers.sort((a, b) => a.distance - b.distance); // Sort drivers by distance
+        
+              // Live Socket check
+              for (let i = 0; i < drivers.length; i++) {
+                const driverSocket = controllerSocketList['us_' + drivers[i].user_id];
+                drivers[i].socket_id = driverSocket.socket_id;
+              }
+
+              return callback(1, drivers);
+        
+            } else {
+              // No drivers available
+              helper.Dlog("No driver available for booking: " + bookingDetail.accpet_driver_id);
+        
+              if (bookingDetail.accpet_driver_id) {
+                // Recall driver not found
+                sql.connect(config)
+                  .then((pool) => {
+                    return pool
+                      .request()
+                      .input('booking_id', sql.Int, bookingDetail.booking_id)
+                      .query(`
+                        UPDATE booking_detail 
+                        SET driver_id = accpet_driver_id 
+                        WHERE booking_id = @booking_id
+                      `);
+                  })
+                  .then((result) => {
+                    if (result.rowsAffected[0] > 0) {
+                      helper.Dlog("Recall driver, no drivers found.");
+                    } else {
+                      helper.Dlog("Recall driver, no drivers found.");
+                    }
+                    return callback(2, "Recall driver not available");
+                  })
+                  .catch((err) => helper.ThrowHtmlError(err));
+              } else {
+                // No driver at all, update booking status
+                sql.connect(config)
+                  .then((pool) => {
+                    return pool
+                      .request()
+                      .input('bs_no_driver', sql.Int, bs_no_driver)
+                      .input('booking_id', sql.Int, bookingDetail.booking_id)
+                      .query(`
+                        UPDATE booking_detail 
+                        SET booking_status = @bs_no_driver, stop_time = GETDATE() 
+                        WHERE booking_id = @booking_id
+                      `);
+                  })
+                  .then((result) => {
+                    if (result.rowsAffected[0] > 0) {
+                      helper.Dlog("Booking status updated to no driver.");
+                    } else {
+                      helper.Dlog("Booking status not updated.");
+                    }
+                    return callback(2, "Driver not available");
+                  })
+                  .catch((err) => helper.ThrowHtmlError(err));
+              }
+            }
+          })
+          .catch((err) => {
+            helper.ThrowHtmlError(err);
+          });         
+
+    })
+
+    //Driver Api
+
 }
 
 function driverNewRequestSend(bookingDetail, callback) {
@@ -1636,7 +1951,82 @@ function driverNewRequestSend(bookingDetail, callback) {
 
     //Driver Api
 
+}
 
+function driverSendRequestFireIndividual(dataRequest, callback) {
+    
+    var requestToken = helper.createRequestToken()
+
+    dataRequest.request_token = requestToken;
+    dataRequest.request_accpet_time = requestAcceptTime;
+
+    var allReadySendRequest = dataRequest.request_driver_id
+    if (allReadySendRequest == "") {
+        allReadySendRequest = dataRequest.driver_id.toString()
+
+    } else {
+        allReadySendRequest = allReadySendRequest + ',' + driverDetail.user_id.toString()
+    }
+
+    sql.connect(config).then((pool) => {
+        return pool
+          .request()
+          .input('driver_id', sql.Int, dataRequest.driver_id)
+          .input('request_driver_id', sql.VarChar, allReadySendRequest)
+          .input('booking_id', sql.Int, dataRequest.booking_id)
+          .input('is_request_send', sql.Int, 1) // equivalent to '1' in MySQL
+          .query(`
+            UPDATE booking_detail 
+            SET driver_id = @driver_id, request_driver_id = @request_driver_id 
+            WHERE booking_id = @booking_id;
+    
+            UPDATE user_detail 
+            SET is_request_send = @is_request_send 
+            WHERE user_id = @driver_id;
+          `);
+      })
+      .then((result) => {
+        // MSSQL `rowsAffected` is an array, where each element indicates the affected rows of each statement in a batch
+        if (result.rowsAffected[0] > 0 && result.rowsAffected[1] > 0) {
+          helper.Dlog("DB Booking detail Update Successfully");
+    
+          // Corn Create Request => Get Feedback (accept, decline, timeout)
+          driverSendRequestTimeOverIndividual(dataRequest.booking_id, dataRequest.driver_id, requestToken, requestWaitingAcceptTime);
+        } else {
+          // If either update failed
+          helper.Dlog("DB Booking detail Update fail");
+        }
+      })
+      .catch((err) => {
+        helper.ThrowHtmlError(err);
+      });
+
+    //`bd`.`drop_lat`, `bd`.`drop_long`, `bd`.`drop_address`, `bd`.`pickup_date`, `bd`.`service_id`, `bd`.`price_id`, `bd`.`payment_id`, `bd`.`est_total_distance`, `bd`.`est_duration`,  `bd`.`created_date`, `bd`.`accpet_time`, `bd`.`start_time`, `bd`.`stop_time`, `bd`.`booking_status`, `bd`.`request_driver_id`, `pd`.`zone_id`, `pd`.`mini_km`, `sd`.`service_name`, `sd`.`color`, `sd`.`icon`, `ud`.`name`, `ud`.`mobile`, `ud`.`mobile_code`, `ud`.`push_token`, (CASE WHEN `ud`.`image` != ''  THEN CONCAT( '" + helper.ImagePath() + "' , `ud`.`image`  ) ELSE '' END) AS `image`, `ppd`.`amt`, `ppd`.`amt`, `ppd`.`payment_type`
+        // OneSignal Push
+    oneSignalPushFire(ut_driver, [dataRequest.push_token], nt_t_1_new_request, 'pickup location: ' + dataRequest.pickup_address, {
+        "booking_id": dataRequest.booking_id,
+        "request_token": requestToken,
+        "service_name": dataRequest.service_name,
+        "color": dataRequest.color,
+        "name": dataRequest.name,
+        "pickup_date": helper.isoDate(helper.serverMySqlDate(dataRequest.pickup_date)),
+        "pickup_lat": dataRequest.pickup_lat,
+        "pickup_long": dataRequest.pickup_long,
+        "drop_lat": dataRequest.pickup_lat,
+        "drop_long": dataRequest.pickup_long,
+        "pickup_address": dataRequest.pickup_address,
+        "drop_address": dataRequest.drop_address,
+        "amt": dataRequest.amt,
+        "payment_type": dataRequest.payment_type,
+        "notification_id": nt_id_1_new_request,
+
+        "est_total_distance": dataRequest.est_total_distance, 
+        "est_duration": dataRequest.est_duration,
+        "pickup_accpet_time": dataRequest.request_accpet_time,
+        "request_time_out": helper.serverDateTimeAddMin(dataRequest.request_accpet_time),
+    });
+
+    callback(dataRequest);
 
 }
 
@@ -1719,6 +2109,37 @@ function driverSendRequestFire(bookingDetail, driverDetail, isSendNotification) 
         });
 
     }
+
+}
+
+function driverSendRequestTimeOverIndividual(bookingId, driverId, requestToken, time) {
+
+    var oneTimeCron = setTimeout(() => {
+        helper.Dlog(" -------------- oneTime Cron Request Accept TimeOver(" + time + ")");
+        sql.connect(config).then((pool) => {
+            return pool
+              .request()
+              .input('is_request_send', sql.Int, 0) // equivalent to '0' in MySQL
+              .input('user_id', sql.Int, driverId)   // assuming driverId is an integer
+              .query('UPDATE user_detail SET is_request_send = @is_request_send WHERE user_id = @user_id');
+          })
+          .then((result) => {
+            // SQL Server's `rowsAffected` is an array, and we need to check if the first element is greater than 0
+            if (result.rowsAffected[0] > 0) {
+              helper.Dlog("Driver id change success : " + driverId);
+              // Find New Driver And Send Request this booking id
+              //driverNewRequestSendByBookingID(bookingId);
+            } else {
+              helper.Dlog("Driver id change fail: " + driverId);
+            }
+        
+            removeRequestTokenPendingArr(requestToken);
+          })
+          .catch((err) => {
+            helper.ThrowHtmlError(err);
+          });  
+    }, time * 1000)
+    requestPendingArray[requestToken] = oneTimeCron;
 
 }
 

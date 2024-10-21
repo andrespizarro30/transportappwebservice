@@ -4,29 +4,29 @@ var config = require('config')
 var dbConfig = config.get('dbConfig')
 //var db = mysql.createConnection(dbConfig);
 
-const dbSettings = {
-    user: 'andresp',
-    password: '123456',
-    server: '192.168.10.12',
-    port: 1433,
-    database: 'taxi_app',
-    "options":{
-        "encrypt":true,
-        "trustServerCertificate": true
-    }
-}
-
 // const dbSettings = {
-//     user: 'andrespizarro',
-//     password: 'Daniel20',
-//     server: 'andrespizarro.database.windows.net',
+//     user: 'andresp',
+//     password: '123456',
+//     server: '192.168.10.11',
 //     port: 1433,
-//     database: 'DY_RFID_DataBase',
+//     database: 'taxi_app',
 //     "options":{
 //         "encrypt":true,
 //         "trustServerCertificate": true
 //     }
 // }
+
+const dbSettings = {
+    user: 'andrespizarro',
+    password: 'Daniel20',
+    server: 'andrespizarro.database.windows.net',
+    port: 1433,
+    database: 'DY_RFID_DataBase',
+    "options":{
+        "encrypt":true,
+        "trustServerCertificate": true
+    }
+}
 
 async function getConnection(){
     try{

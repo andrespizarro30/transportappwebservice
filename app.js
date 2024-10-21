@@ -14,11 +14,19 @@ var app = express();
 var server = require('http').createServer(app);
 var io = require('socket.io')(server, {
   cors: {
-    origin: "http://localhost:4200",
+    origin: "*",
     methods: ["GET", "POST"]
   }
 })
-var serverPort = 3001;
+//origin: "https://transportplattform.azurewebsites.net",
+//origin: "http://localhost:4200",
+
+//var serverPort = 3001;
+var serverPort = process.env.PORT || 3001;
+
+console.log("LOCAL PORT IS: " + serverPort);
+
+app.set('port',serverPort);
 
 var user_socket_connect_list = [];
 
@@ -36,8 +44,9 @@ app.use('/', indexRouter);
 app.use('/users', usersRouter);
 
 const corsOptions = {
-  origin: "http://localhost:4200",
+  origin: "*"
 }
+//origin: "http://localhost:4200",
 
 app.use(cors(corsOptions));
 
@@ -65,9 +74,12 @@ app.use(function (err, req, res, next) {
   res.render('error');
 });
 
-module.exports = app;
-
 server.listen(serverPort);
+// app.listen(serverPort, () => {
+//   console.log(`Server is running on port ${serverPort}`);
+// });
+
+module.exports = app;
 
 console.log("Server Start : " + serverPort );
 
