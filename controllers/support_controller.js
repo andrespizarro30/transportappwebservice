@@ -54,12 +54,12 @@ module.exports.controller = (app, io, socket_list) => {
                         .input('user_id', sql.Int, uObj.user_id)
                         .query(
                             `SELECT ud.user_id, 'App Support' AS name, 
-                            (CASE WHEN ud.image != '' THEN CONCAT('${helper.ImagePath}', ud.image) ELSE '' END) AS image, '' AS message, 0 AS message_type, 
+                            (CASE WHEN ud.image != '' THEN CONCAT('${helper.ImagePath}', ud.image,'${helper.ImagePathToken}') ELSE '' END) AS image, '' AS message, 0 AS message_type, 
                             GETDATE() AS created_date, 0 AS base_count 
                             FROM user_detail AS ud WHERE ud.user_type = @user_type;
 
                             SELECT ud.user_id, ud.name, 
-                            (CASE WHEN ud.image != '' THEN CONCAT('${helper.ImagePath}', ud.image) ELSE '' END) AS image, 
+                            (CASE WHEN ud.image != '' THEN CONCAT('${helper.ImagePath}', ud.image,'${helper.ImagePathToken}') ELSE '' END) AS image, 
                             ISNULL(cm.message, '') AS message, ISNULL(cm.message_type, 0) AS message_type, ISNULL(cm.created_date, GETDATE()) AS created_date, 
                             ISNULL(bc.base_count, 0) AS base_count 
                             FROM user_detail AS ud 
@@ -263,7 +263,7 @@ module.exports.controller = (app, io, socket_list) => {
                             `INSERT INTO chat_message (sender_id, receiver_id, message, message_type) 
                             VALUES (@sender_id, @receiver_id, @message, @message_type); 
                             SELECT user_id, name, 
-                            (CASE WHEN image != '' THEN CONCAT('${helper.ImagePath}', image) ELSE '' END) AS image, 
+                            (CASE WHEN image != '' THEN CONCAT('${helper.ImagePath}', image,'${helper.ImagePathToken}') ELSE '' END) AS image, 
                             '' AS message, 0 AS message_type, GETDATE() AS created_date, 0 AS base_count 
                             FROM user_detail WHERE user_id = @user_id;`
                         );

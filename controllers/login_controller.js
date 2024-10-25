@@ -128,8 +128,8 @@ module.exports.controller = (app, io, socket_list) => {
                     .query(`
                         SELECT * FROM zone_list WHERE modify_date >= '${lastCallTime}';
                         SELECT service_id, service_name, seat, color, 
-                          (CASE WHEN icon != '' THEN CONCAT('${helper.ImagePath()}', icon) ELSE '' END) AS icon,  
-                          (CASE WHEN top_icon != '' THEN CONCAT('${helper.ImagePath()}', top_icon) ELSE '' END) AS top_icon, 
+                          (CASE WHEN icon != '' THEN CONCAT('${helper.ImagePath()}', icon ,'${helper.ImagePathToken()}') ELSE '' END) AS icon,  
+                          (CASE WHEN top_icon != '' THEN CONCAT('${helper.ImagePath()}', top_icon ,'${helper.ImagePathToken()}') ELSE '' END) AS top_icon, 
                           gender, status, created_date, modify_date, description 
                           FROM service_detail WHERE modify_date >= '${lastCallTime}';
                         SELECT * FROM price_detail WHERE modify_date >= '${lastCallTime}';
@@ -169,7 +169,7 @@ module.exports.controller = (app, io, socket_list) => {
                     user_type, 
                     is_block, 
                     (CASE 
-                        WHEN image != '' THEN CONCAT('${helper.ImagePath()}', image) 
+                        WHEN image != '' THEN CONCAT('${helper.ImagePath()}', image ,'${helper.ImagePathToken()}') 
                         ELSE '' 
                      END) AS image, 
                     status, 
@@ -415,6 +415,55 @@ module.exports.controller = (app, io, socket_list) => {
             checkAccessToken(req.headers, res, (uObj) => {
                 helper.CheckParameterValid(res, files, ["image"], () => {
 
+                    helper.uploadImageToFirebase(files.image[0],'profile',(imgPath)=>{
+
+                        if (imgPath == "error") {
+                            helper.ThrowHtmlError(err, res);
+                            return;
+                        } else {
+                            sql.connect(config).then(pool => {
+                                return pool.request()
+                                    .input('image', sql.NVarChar, imgPath)
+                                    .input('user_id', sql.Int, uObj.user_id)
+                                    .query('UPDATE user_detail SET image = @image WHERE user_id = @user_id');
+                            }).then(result => {
+                                if (result.rowsAffected[0] > 0) {
+                                    // Call getUserDetailUserId after successful update
+                                    getUserDetailUserId(uObj.user_id, (isDone, userDetail) => {
+                                        res.json({ "status": "1", "payload": userDetail });
+                                    });
+                                } else {
+                                    res.json({ "status": "0", "message": msg_fail });
+                                }
+                            }).catch(err => {
+                                helper.ThrowHtmlError(err, res);
+                            });
+                        }
+
+                    })
+                })
+            })
+
+        })
+
+    })
+
+    app.post('/api/profile_image_fs', (req, res) => {
+
+        helper.Dlog(req.body);
+
+        var form = new multiparty.Form();
+        form.parse(req, (err, reqObj, files) => {
+            console.log(err);
+            if (err) {
+                console.log(err);
+                helper.ThrowHtmlError(err, res);
+                return
+            }
+
+            checkAccessToken(req.headers, res, (uObj) => {
+                helper.CheckParameterValid(res, files, ["image"], () => {
+
                     var extension = files.image[0].originalFilename.substring(files.image[0].originalFilename.lastIndexOf(".") + 1)
                     var imageFileName = "profile/" + helper.fileNameGenerate(extension);
 
@@ -466,8 +515,8 @@ module.exports.controller = (app, io, socket_list) => {
                         "INNER JOIN service_detail AS sd ON sd.service_id = pd.service_id AND sd.status = 1 AND zl.status = 1 " +
                         "GROUP BY zl.zone_id,zl.zone_name; " +
                         "SELECT service_id, service_name, seat, color, " +
-                        "(CASE WHEN icon != '' THEN CONCAT('" + helper.ImagePath() + "', icon) ELSE '' END) AS icon, " +
-                        "(CASE WHEN top_icon != '' THEN CONCAT('" + helper.ImagePath() + "',top_icon) ELSE '' END) AS top_icon " +
+                        "(CASE WHEN icon != '' THEN CONCAT('" + helper.ImagePath() + "', icon ,'${helper.ImagePathToken()}') ELSE '' END) AS icon, " +
+                        "(CASE WHEN top_icon != '' THEN CONCAT('" + helper.ImagePath() + "',top_icon ,'${helper.ImagePathToken()}') ELSE '' END) AS top_icon " +
                         "FROM service_detail WHERE status = 1"
                     );
             }).then(result => {
@@ -842,7 +891,7 @@ module.exports.controller = (app, io, socket_list) => {
     app.post('/api/admin/user_list', (req, res) => {
         helper.Dlog(req.body)
         checkAccessToken(req.headers, res, (uObj) => {
-            db.query("SELECT ud.user_id, ud.name, ud.email, ud.gender, ud.mobile, ud.mobile_code, ud.user_type, ud.device_source, ud.zone_id, ud.is_block, (CASE WHEN ud.image != '' THEN CONCAT('" + helper.ImagePath() + "', ud.image  ) ELSE '' END) AS image , ud.is_online, ud.status, ud.created_date, IFNULL( zl.zone_name, '' ) AS zone_name FROM user_detail AS ud" +
+            db.query("SELECT ud.user_id, ud.name, ud.email, ud.gender, ud.mobile, ud.mobile_code, ud.user_type, ud.device_source, ud.zone_id, ud.is_block, (CASE WHEN ud.image != '' THEN CONCAT('" + helper.ImagePath() + "', ud.image ,'${helper.ImagePathToken()}'  ) ELSE '' END) AS image , ud.is_online, ud.status, ud.created_date, IFNULL( zl.zone_name, '' ) AS zone_name FROM user_detail AS ud" +
                 "LEFT JOINzone_list ASzl ONzl.zone_id = ud.zone_id" +
                 "WHERE user_type = 1 ORDER BYud.user_id DESC", [], (err, result) => {
                     if (err) {
@@ -862,7 +911,7 @@ module.exports.controller = (app, io, socket_list) => {
     app.post('/api/admin/driver_list', (req, res) => {
         helper.Dlog(req.body)
         checkAccessToken(req.headers, res, (uObj) => {
-            db.query("SELECT ud.user_id, ud.name, ud.email, ud.gender, ud.mobile, ud.mobile_code, ud.user_type, ud.device_source, ud.zone_id, ud.is_block, (CASE WHEN ud.image != '' THEN CONCAT('" + helper.ImagePath() + "', ud.image  ) ELSE '' END) AS image , ud.is_online, ud.status, ud.created_date, IFNULL( zl.zone_name , '' ) AS zone_name FROM user_detail AS ud" +
+            db.query("SELECT ud.user_id, ud.name, ud.email, ud.gender, ud.mobile, ud.mobile_code, ud.user_type, ud.device_source, ud.zone_id, ud.is_block, (CASE WHEN ud.image != '' THEN CONCAT('" + helper.ImagePath() + "', ud.image ,'" + helper.ImagePathToken() + "'  ) ELSE '' END) AS image , ud.is_online, ud.status, ud.created_date, IFNULL( zl.zone_name , '' ) AS zone_name FROM user_detail AS ud" +
                 "LEFT JOINzone_list ASzl ONzl.zone_id = ud.zone_id" +
                 "WHERE user_type = 2 ORDER BYud.user_id DESC", [], (err, result) => {
                     if (err) {
@@ -991,7 +1040,7 @@ module.exports.controller = (app, io, socket_list) => {
         checkAccessToken(req.headers, res, (uObj) => {
 
 
-            db.query("SELECT service_id, service_name, seat, color, (CASE WHEN icon != '' THEN CONCAT('" + helper.ImagePath() + "', icon  ) ELSE '' END) AS icon,  (CASE WHEN top_icon != '' THEN CONCAT('" + helper.ImagePath() + "', top_icon  ) ELSE '' END) AS top_icon, gender, status, created_date, description FROM service_detail WHERE status != 2 ", [], (err, result) => {
+            db.query("SELECT service_id, service_name, seat, color, (CASE WHEN icon != '' THEN CONCAT('" + helper.ImagePath() + "', icon ,'" + helper.ImagePathToken() + "'  ) ELSE '' END) AS icon,  (CASE WHEN top_icon != '' THEN CONCAT('" + helper.ImagePath() + "', top_icon ,'" + helper.ImagePathToken() + "'  ) ELSE '' END) AS top_icon, gender, status, created_date, description FROM service_detail WHERE status != 2 ", [], (err, result) => {
                 if (err) {
                     helper.ThrowHtmlError(err, res);
                     return
@@ -1091,7 +1140,7 @@ module.exports.controller = (app, io, socket_list) => {
 
                         if (result.affectedRows > 0) {
                             db.query(
-                                "SELECT service_id, service_name, seat, color, (CASE WHEN icon != '' THEN CONCAT('" + helper.ImagePath() + "', icon  ) ELSE '' END) AS icon,  (CASE WHEN top_icon != '' THEN CONCAT('" + helper.ImagePath() + "', top_icon  ) ELSE '' END) AS top_icon, gender, status, created_date, description FROM service_detail WHERE service_id = ? ", [
+                                "SELECT service_id, service_name, seat, color, (CASE WHEN icon != '' THEN CONCAT('" + helper.ImagePath() + "', icon ,'" + helper.ImagePathToken() + "'  ) ELSE '' END) AS icon,  (CASE WHEN top_icon != '' THEN CONCAT('" + helper.ImagePath() + "', top_icon ,'" + helper.ImagePathToken() + "'  ) ELSE '' END) AS top_icon, gender, status, created_date, description FROM service_detail WHERE service_id = ? ", [
                                 reqObj.service_id[0]
                             ], (err, result) => {
 

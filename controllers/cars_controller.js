@@ -119,7 +119,7 @@ module.exports.controller = (app, io, socket_list) => {
                     .input('status', sql.Int, 2)
                     .query(`
                         SELECT uc.user_car_id, cs.series_name, cm.model_name, cb.brand_name, uc.car_number,
-                            CASE WHEN uc.car_image != '' THEN CONCAT('${helper.ImagePath()}', uc.car_image) ELSE '' END AS car_image,
+                            CASE WHEN uc.car_image != '' THEN CONCAT('${helper.ImagePath()}', uc.car_image ,'${helper.ImagePathToken()}') ELSE '' END AS car_image,
                             uc.status, sd.service_name, sd.service_id, ud.select_service_id,
                             ISNULL(zwcs.status, 0) AS service_status,
                             CASE WHEN uc.user_car_id = ud.car_id THEN 1 ELSE 0 END AS is_set_running
@@ -244,7 +244,7 @@ module.exports.controller = (app, io, socket_list) => {
                                 .input('status', sql.Int, 1)
                                 .query(
                                     `SELECT uc.user_car_id, cs.series_name, cm.model_name, cb.brand_name, uc.car_number, 
-                                    (CASE WHEN uc.car_image != '' THEN CONCAT('${helper.ImagePath()}', uc.car_image) ELSE '' END) AS car_image, 
+                                    (CASE WHEN uc.car_image != '' THEN CONCAT('${helper.ImagePath()}', uc.car_image ,'${helper.ImagePathToken()}') ELSE '' END) AS car_image, 
                                     uc.status, (CASE WHEN uc.user_car_id = ud.car_id THEN 1 ELSE 0 END) AS is_set_running 
                                     FROM user_cars AS uc 
                                     INNER JOIN car_series AS cs ON uc.series_id = cs.series_id 
@@ -859,7 +859,7 @@ module.exports.controller = (app, io, socket_list) => {
 
                         res.json({
                             "status": "1",
-                            "payload": { "name": name, "address": address, "image": helper.ImagePath() + imageFileName },
+                            "payload": { "name": name, "address": address, "image": helper.ImagePath() + imageFileName + helper.ImagePathToken() },
                             "message": msg_success
                         })
                     }
@@ -1001,6 +1001,56 @@ function car_series_add(brand_id, model_id, car_series, callback) {
 }
 
 function user_car_add(user_id, series_id, car_number, car_image_path, callback) {
+
+    // Check if the car already exists
+    sql.query`
+        SELECT user_car_id
+        FROM user_cars
+        WHERE user_id = ${user_id} AND series_id = ${series_id} AND car_number = ${car_number} AND status != 2
+    `
+    .then(result => {
+        if (result.recordset.length == 0) {
+            // Car does not exist, proceed with file operations and insertion
+            var extension = car_image_path.originalFilename.substring(car_image_path.originalFilename.lastIndexOf(".") + 1);
+            var imageFileName = "car/" + helper.fileNameGenerate(extension);
+            var newPath = imageSavePath + imageFileName;
+
+            helper.uploadImageToFirebase(car_image_path,'car',(imgPath)=>{
+
+                if (imgPath == "error") {
+                    helper.ThrowHtmlError(err, res);
+                    return;
+                } else {
+                    sql.query`
+                            INSERT INTO user_cars (user_id, series_id, car_number, car_image)
+                            VALUES (${user_id}, ${series_id}, ${car_number}, ${imgPath})
+                        `
+                    .then(result => {
+                        if(result.rowsAffected.length>0){
+                            return callback({ status: "1", message: "car added successfully" });
+                        }else{
+                            return callback({ status: "0", message: msg_fail });
+                        }                        
+                    })
+                    .catch(err => {
+                        helper.ThrowHtmlError(err);
+                        return callback({ status: "0", message: msg_fail });
+                    });                    
+                }
+
+            })
+        } else {
+            // Car already exists
+            callback({ status: "0", message: "this car already added" });
+        }
+    })
+    .catch(err => {
+        helper.ThrowHtmlError(err);
+        callback({ status: "0", message: msg_fail });
+    });
+}
+
+function user_car_add_fs(user_id, series_id, car_number, car_image_path, callback) {
 
     // Check if the car already exists
     sql.query`

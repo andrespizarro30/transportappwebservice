@@ -9,7 +9,12 @@ const msg_server_internal_error = "Server Internal Error"
 module.exports = {
 
     ImagePath:() => {
-        return "http://192.168.10.10:3001/img/";
+        //return "http://192.168.10.10:3001/img/";
+        return "https://firebasestorage.googleapis.com/v0/b/plataformatransporte-b20ba.appspot.com/o/";
+    },
+
+    ImagePathToken:()=>{
+        return "?alt=media&token=30d963f5-cca4-41bf-aa11-fbad722e51fd";
     },
 
     ThrowHtmlError: (err, res) => {
@@ -152,6 +157,29 @@ module.exports = {
         return callback(minlat, maxlat, minlng, maxlng);
     },
 
+    findNearByLocation2: (lat, long, radius_km, callback) => {
+        var latitude = parseFloat(lat);
+        var longitude = parseFloat(long);
+        var distance_find = parseFloat(radius_km); // radius in km
+
+        // Earth's radius in kilometers
+        var earthRadius = 6371; 
+
+        // Calculate the latitude and longitude bounds
+        var deltaLat = distance_find / earthRadius;
+        var deltaLng = distance_find / (earthRadius * Math.cos(latitude * Math.PI / 180));
+
+        var maxlat = latitude + (deltaLat * 180 / Math.PI);
+        var minlat = latitude - (deltaLat * 180 / Math.PI);
+        var maxlng = longitude + (deltaLng * 180 / Math.PI);
+        var minlng = longitude - (deltaLng * 180 / Math.PI);
+
+        console.log("minlat: " + minlat + ", maxlat: " + maxlat + ", minlng: " + minlng + ", maxlng: " + maxlng);
+        
+        return callback(minlat, maxlat, minlng, maxlng);
+    },
+
+
     distance: (lat1, lon1, lat2, lon2) => {
         return distance(lat1, lon1, lat2, lon2);
     },
@@ -167,8 +195,58 @@ module.exports = {
         }
         return callback(totalMin, durationString)
 
+    },
+
+    uploadImageToFirebase: async (file,imagePath,callback)=>{
+
+        const admin = require('firebase-admin');
+        const serviceAccount = require('./plataformatransporte-b20ba-firebase-adminsdk-sldmg-37ecfb78f8.json');
+
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            storageBucket: 'plataformatransporte-b20ba.appspot.com',
+            });
+
+        const bucket = admin.storage().bucket();
+
+        var imageSavePath = "img/";
+
+        var extension = file.originalFilename.substring(file.originalFilename.lastIndexOf(".") + 1)
+        var imageFileName = `${imagePath}/` + fileNameGenerate(extension);
+
+        var newPath = imageSavePath + imageFileName;
+
+        const contentType = file.headers['content-type'];
+
+        const blob = bucket.file(newPath);
+          const blobStream = blob.createWriteStream({
+            metadata: {
+              contentType: contentType,
+            },
+          });
+    
+          blobStream.on('error', (error) => {
+            console.error(error);
+            return callback('error');
+          });
+    
+          blobStream.on('finish', () => {
+            return callback(blob.id);
+          });
+    
+          const fs = require('fs');
+          const readStream = fs.createReadStream(file.path);
+          readStream.pipe(blobStream);
+
     }
 
+}
+
+function fileNameGenerate(extension){
+    var chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    var result = '';
+    for (let i = 10; i > 0; i--) result += chars[Math.floor(Math.random() * chars.length)];
+    return serverDateTime('YYYYMMDDHHmmssms') + result + '.' + extension;
 }
 
 

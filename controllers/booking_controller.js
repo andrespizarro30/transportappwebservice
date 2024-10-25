@@ -208,7 +208,7 @@ module.exports.controller = (app, io, socket_list) => {
                                   .input('booking_id', sql.Int, bookingId)
                                   .input('booking_status', sql.Int, bs_pending)
                                   .query(
-                                    `SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, (CASE WHEN ud.image != '' THEN CONCAT( '${helper.ImagePath()}', ud.image ) ELSE '' END) AS image, ppd.amt, ppd.driver_amt, ppd.payment_type 
+                                    `SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, (CASE WHEN ud.image != '' THEN CONCAT( '${helper.ImagePath()}', ud.image ,'${helper.ImagePathToken()}'  ) ELSE '' END) AS image, ppd.amt, ppd.driver_amt, ppd.payment_type 
                                     FROM booking_detail AS bd 
                                     INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id 
                                     INNER JOIN price_detail AS pd ON pd.price_id = bd.price_id 
@@ -383,7 +383,7 @@ module.exports.controller = (app, io, socket_list) => {
                                   .input('booking_id', sql.Int, bookingId)
                                   .input('booking_status', sql.Int, bs_pending)
                                   .query(
-                                    `SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, (CASE WHEN ud.image != '' THEN CONCAT( '${helper.ImagePath()}', ud.image ) ELSE '' END) AS image, ppd.amt, ppd.driver_amt, ppd.payment_type 
+                                    `SELECT bd.booking_id, bd.driver_id, bd.user_id, bd.pickup_lat, bd.pickup_long, bd.pickup_address, bd.drop_lat, bd.drop_long, bd.drop_address, bd.pickup_date, bd.service_id, bd.price_id, bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, pd.zone_id, pd.mini_km, sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, (CASE WHEN ud.image != '' THEN CONCAT( '${helper.ImagePath()}', ud.image ,'${helper.ImagePathToken()}' ) ELSE '' END) AS image, ppd.amt, ppd.driver_amt, ppd.payment_type 
                                     FROM booking_detail AS bd 
                                     INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id 
                                     INNER JOIN price_detail AS pd ON pd.price_id = bd.price_id 
@@ -1286,7 +1286,7 @@ module.exports.controller = (app, io, socket_list) => {
                             [sd].[service_name], 
                             (CASE 
                                 WHEN [sd].[icon] != '' 
-                                THEN CONCAT('${helper.ImagePath()}', [sd].[icon]) 
+                                THEN CONCAT('${helper.ImagePath()}', [sd].[icon] ,'${helper.ImagePathToken()}') 
                                 ELSE '' 
                             END) AS [icon], 
                             [sd].[color], 
@@ -1390,7 +1390,7 @@ module.exports.controller = (app, io, socket_list) => {
                     [sd].[service_name], 
                     (CASE 
                         WHEN [sd].[icon] != '' 
-                        THEN CONCAT('${helper.ImagePath()}', [sd].[icon]) 
+                        THEN CONCAT('${helper.ImagePath()}', [sd].[icon] ,'${helper.ImagePathToken()}') 
                         ELSE '' 
                     END) AS [icon], 
                     [sd].[color] 
@@ -1679,7 +1679,7 @@ function driversList(bookingDetail, callback) {
     var latitude = parseFloat(bookingDetail.pickup_lat)
     var longitude = parseFloat(bookingDetail.pickup_long)
 
-    helper.findNearByLocation(latitude, longitude, 3, (minLat, maxLat, minLng, maxLng) => {
+    helper.findNearByLocation2(latitude, longitude, 3, (minLat, maxLat, minLng, maxLng) => {
         var allReadySendRequest = bookingDetail.request_driver_id
         if (allReadySendRequest == "") {
             allReadySendRequest = "''"
@@ -1697,7 +1697,7 @@ function driversList(bookingDetail, callback) {
               .query(`
                 SELECT ud.user_id, ud.device_source, ud.push_token, ud.lati, ud.longi, 
                 uc.car_number, cs.series_name, cb.brand_name, cm.model_name, 
-                (CASE WHEN uc.car_image != '' THEN CONCAT( '${helper.ImagePath()}', uc.car_image ) ELSE '' END) AS car_image
+                (CASE WHEN uc.car_image != '' THEN CONCAT( '${helper.ImagePath()}', uc.car_image ,'${helper.ImagePathToken()}' ) ELSE '' END) AS car_image
                 FROM user_detail AS ud
                 INNER JOIN zone_document AS zd ON zd.zone_id = ud.zone_id 
                   AND zd.service_id = @service_id 
@@ -1814,7 +1814,7 @@ function driverNewRequestSend(bookingDetail, callback) {
     var latitude = parseFloat(bookingDetail.pickup_lat)
     var longitude = parseFloat(bookingDetail.pickup_long)
 
-    helper.findNearByLocation(latitude, longitude, 3, (minLat, maxLat, minLng, maxLng) => {
+    helper.findNearByLocation2(latitude, longitude, 3, (minLat, maxLat, minLng, maxLng) => {
         var allReadySendRequest = bookingDetail.request_driver_id
         if (allReadySendRequest == "") {
             allReadySendRequest = "''"
@@ -2195,7 +2195,7 @@ function driverNewRequestSendByBookingID(bookingID) {
                    bd.payment_id, bd.est_total_distance, bd.est_duration, bd.created_date, bd.accpet_time, 
                    bd.start_time, bd.stop_time, bd.booking_status, bd.request_driver_id, bd.accpet_driver_id, pd.zone_id, pd.mini_km, 
                    sd.service_name, sd.color, sd.icon, ud.name, ud.mobile, ud.mobile_code, ud.push_token, 
-                   (CASE WHEN ud.image != '' THEN CONCAT('` + helper.ImagePath() + `', ud.image) ELSE '' END) AS image, 
+                   (CASE WHEN ud.image != '' THEN CONCAT('` + helper.ImagePath() + `', ud.image ,'${helper.ImagePathToken()}') ELSE '' END) AS image, 
                    ppd.amt, ppd.driver_amt, ppd.payment_type 
             FROM booking_detail AS bd
             INNER JOIN user_detail AS ud ON ud.user_id = bd.user_id
@@ -2522,11 +2522,11 @@ function bookingInformationDetail(booking_id, user_type) {
                 bd.accpet_time, bd.payment_id, bd.start_time, bd.stop_time, bd.duration, bd.toll_tax, bd.tip_amount, 
                 bd.booking_status, bd.est_total_distance, bd.est_duration, pm.mini_km, ud.name, ud.push_token, 
                 ud.gender, ud.mobile, ud.mobile_code, ud.lati, ud.longi, 
-                (CASE WHEN ud.image != '' THEN CONCAT('${helper.ImagePath()}', ud.image) ELSE '' END) AS image, 
+                (CASE WHEN ud.image != '' THEN CONCAT('${helper.ImagePath()}', ud.image,'${helper.ImagePathToken()}') ELSE '' END) AS image, 
                 pd.payment_type, pd.amt, pd.payment_date, pd.tax_amt, pd.pay_amt, pd.pay_card_amt, 
                 pd.driver_amt, pd.pay_wallet_amt, pd.status AS user_payment_status, sd.service_name, sd.color, 
-                (CASE WHEN sd.top_icon != '' THEN CONCAT('${helper.ImagePath()}', sd.top_icon) ELSE '' END) AS top_icon, 
-                (CASE WHEN sd.icon != '' THEN CONCAT('${helper.ImagePath()}', sd.icon) ELSE '' END) AS icon, 
+                (CASE WHEN sd.top_icon != '' THEN CONCAT('${helper.ImagePath()}', sd.top_icon ,'${helper.ImagePathToken()}') ELSE '' END) AS top_icon, 
+                (CASE WHEN sd.icon != '' THEN CONCAT('${helper.ImagePath()}', sd.icon ,'${helper.ImagePathToken()}') ELSE '' END) AS icon, 
                 cs.series_name, cm.model_name, cb.brand_name, ucd.car_number, pd.status AS payment_status 
             FROM booking_detail AS bd
             INNER JOIN user_detail AS ud ON ud.user_id = bd.${userId}
