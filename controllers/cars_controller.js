@@ -9,7 +9,7 @@ var sql = require('mssql');
 // const config = {
 //     user: 'andresp',
 //     password: '123456',
-//     server: '192.168.10.11',
+//     server: '192.168.10.21',
 //     port: 1433,
 //     database: 'taxi_app',
 //     "options":{
@@ -35,11 +35,15 @@ const ut_admin = 4
 const ut_driver = 2
 const ut_user = 1
 
-module.exports.controller = (app, io, socket_list) => {
+var admin_fire;
+
+module.exports.controller = (app, io, socket_list, admin) => {
 
     const msg_success = "successfully";
     const msg_fail = "fail";
     const msg_invalidUser = "invalid username";
+
+    admin_fire = admin;
 
     app.post('/api/add_car', (req, res) => {
 
@@ -1015,7 +1019,7 @@ function user_car_add(user_id, series_id, car_number, car_image_path, callback) 
             var imageFileName = "car/" + helper.fileNameGenerate(extension);
             var newPath = imageSavePath + imageFileName;
 
-            helper.uploadImageToFirebase(car_image_path,'car',(imgPath)=>{
+            helper.uploadImageToFirebase(car_image_path,'car',admin_fire,(imgPath)=>{
 
                 if (imgPath == "error") {
                     helper.ThrowHtmlError(err, res);

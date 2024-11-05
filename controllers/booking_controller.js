@@ -14,7 +14,7 @@ var sql = require('mssql');
 // const config = {
 //     user: 'andresp',
 //     password: '123456',
-//     server: '192.168.10.11',
+//     server: '192.168.10.21',
 //     port: 1433,
 //     database: 'taxi_app',
 //     "options":{
@@ -85,7 +85,7 @@ const requestPendingArray = [];
 const userLocationInfoArray = {};
 const driverUserWaitingArray = {};
 
-module.exports.controller = (app, io, socket_list) => {
+module.exports.controller = (app, io, socket_list, admin) => {
 
     controllerIO = io;
     controllerSocketList = socket_list;
@@ -1017,6 +1017,192 @@ module.exports.controller = (app, io, socket_list) => {
     })
 
     app.post('/api/ride_stop', (req, res) => {
+        helper.Dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (uObj) => {
+            helper.CheckParameterValid(res, reqObj, ["booking_id", "drop_latitude", "drop_longitude", "toll_tax", "ride_location"], () => {
+                const rideLocations = reqObj.ride_location.replace(/,(\s*)]$/, ']')
+                var stopTime = helper.serverYYYYMMDDHHmmss()
+                var rideLocationString = "";
+                var rideLocationArr = JSON.parse(rideLocations);
+                var totalKM = 0;
+
+                rideLocationArr.forEach((locationDetail, index) => {
+                    rideLocationString += '[' + locationDetail.latitude + ',' + locationDetail.longitude + ',' + locationDetail.time + '],';
+                    if (index != 0) {
+                        totalKM += helper.distance(rideLocationArr[index - 1].latitude, rideLocationArr[index - 1].longitude, locationDetail.latitude, locationDetail.longitude)
+                    }
+                })
+
+                helper.Dlog("Total KM : " + totalKM);
+
+                sql.connect(config).then(pool => {
+                    return pool
+                        .request()
+                        .input('booking_id', sql.Int, reqObj.booking_id)
+                        .query(`
+                            SELECT pd.*, bd.start_time, zl.*, bd.booking_id, pay.amt  
+                            FROM price_detail AS pd
+                            INNER JOIN booking_detail AS bd ON pd.price_id = bd.price_id
+                            INNER JOIN zone_list AS zl ON zl.zone_id = pd.zone_id
+                            INNER JOIN payment_detail AS pay ON pay.payment_id = bd.payment_id
+                            WHERE bd.booking_id = @booking_id
+                        `);
+                })
+                .then(result => {
+                    if (result.recordset.length > 0) {
+                        const bookingDetail = result.recordset[0];
+
+                        const date1 = helper.serverMySqlDate(bookingDetail.start_time);
+                        let date2 = bookingDetail.start_time;
+                        date2 = date2.setHours(date2.getHours() + 5);
+                
+                        helper.timeDuration(stopTime, date2, (totalMin, durationString) => {
+                            //let totalKM = reqObj.totalKM;
+                            if (bookingDetail.mini_km > totalKM) {
+                                totalKM = parseFloat(bookingDetail.mini_km);
+                            }
+                
+                            let amount = parseFloat(bookingDetail.base_charge) +
+                                (totalKM * parseFloat(bookingDetail.per_km_charge)) +
+                                (totalMin * parseFloat(bookingDetail.per_min_charge)) +
+                                parseFloat(bookingDetail.booking_charge);
+                
+                            if (bookingDetail.mini_fair >= amount) {
+                                amount = parseFloat(bookingDetail.mini_fair);
+                            }
+                
+                            const totalAmount = (amount * 100) / (100 + parseInt(bookingDetail.tax));
+                            const taxAmount = (amount - totalAmount).toFixed(3);
+                            const driverAmount = ((totalAmount - parseFloat(bookingDetail.booking_charge)) * (1 - (rideCommissionVal / 100.0))).toFixed(2);
+                            let finalTotalAmount = totalAmount + parseFloat(reqObj.toll_tax);
+                            const rideCommission = parseFloat(finalTotalAmount - driverAmount).toFixed(2);
+
+                            finalTotalAmount = parseFloat(bookingDetail.amt);
+                
+                            // Single query to update all related tables using MERGE
+                            sql.connect(config).then(pool => {
+                                return pool
+                                    .request()
+                                    .input('booking_status', sql.Int, bs_complete)
+                                    .input('toll_tax', sql.Float, reqObj.toll_tax)
+                                    .input('total_distance', sql.Float, totalKM)
+                                    .input('duration', sql.VarChar, durationString)
+                                    .input('totalAmount', sql.Float, finalTotalAmount)
+                                    .input('drop_lat', sql.Float, reqObj.drop_latitude)
+                                    .input('drop_long', sql.Float, reqObj.drop_longitude)
+                                    .input('driverAmount', sql.Float, driverAmount)
+                                    .input('taxAmount', sql.Float, taxAmount)
+                                    .input('rideCommission', sql.Float, rideCommission)
+                                    .input('booking_id', sql.Int, reqObj.booking_id)
+                                    .input('driver_id', sql.Int, uObj.user_id)
+                                    .query(`
+                                        UPDATE bd
+                                        SET bd.booking_status = @booking_status, 
+                                            bd.toll_tax = @toll_tax, 
+                                            bd.total_distance = @total_distance, 
+                                            bd.duration = @duration, 
+                                            bd.drop_lat = @drop_lat, 
+                                            bd.drop_long = @drop_long, 
+                                            bd.stop_time = GETDATE(), 
+                                            bd.taxi_amout = @totalAmount
+                                        FROM booking_detail AS bd
+                                        WHERE bd.booking_id = @booking_id 
+                                          AND bd.driver_id = @driver_id 
+                                          AND bd.booking_status < @booking_status;
+                                        UPDATE pd
+                                        SET pd.amt = @totalAmount, 
+                                            pd.driver_amt = @driverAmount, 
+                                            pd.tax_amt = @taxAmount, 
+                                            pd.ride_commission = @rideCommission, 
+                                            pd.status = 1, 
+                                            pd.payment_date = GETDATE()
+                                        FROM payment_detail AS pd
+                                        WHERE pd.payment_id IN (
+                                            SELECT bd.payment_id FROM booking_detail bd WHERE bd.booking_id = @booking_id
+                                        );
+                                        UPDATE ud
+                                        SET ud.status = 1
+                                        FROM user_detail AS ud
+                                        WHERE ud.user_id IN (
+                                            SELECT bd.driver_id FROM booking_detail bd WHERE bd.booking_id = @booking_id
+                                            UNION
+                                            SELECT bd.user_id FROM booking_detail bd WHERE bd.booking_id = @booking_id
+                                        );
+                                    `);
+                            })
+                            .then((result) => {
+                                if (result.rowsAffected[0] > 0 && result.rowsAffected[1] > 0 && result.rowsAffected[2] > 0) {
+                                    // Send notification and emit socket events
+                                    bookingInformationDetail(reqObj.booking_id, '2').then((result) => {
+                                        if (result && result.length > 0) {
+                                            const userSocket = controllerSocketList['us_' + result[0].user_id];
+                                            
+                                            if (userSocket && controllerIO.sockets.sockets.get(userSocket.socket_id)) {
+                                                const responseObj = {
+                                                    status: "1",
+                                                    payload: {
+                                                        booking_id: parseInt(reqObj.booking_id),
+                                                        toll_tax: reqObj.toll_tax,
+                                                        tax_amount: taxAmount,
+                                                        amount: finalTotalAmount,
+                                                        duration: durationString,
+                                                        total_distance: totalKM,
+                                                        payment_type: result[0].payment_type,
+                                                        booking_status: bs_complete
+                                                    },
+                                                    message: "ride stop"
+                                                };
+                                                
+                                                controllerIO.sockets.sockets.get(userSocket.socket_id).emit("ride_stop", responseObj);
+                                            }
+                                
+                                            // Trigger OneSignal push notification
+                                            oneSignalPushFire(1, [result[0].push_token], nt_t_5_ride_complete, "Ride Complete", {
+                                                booking_id: reqObj.booking_id,
+                                                toll_tax: reqObj.toll_tax,
+                                                amount: finalTotalAmount.toString(),
+                                                duration: durationString,
+                                                total_distance: totalKM.toString(),
+                                                payment_type: result[0].payment_type.toString(),
+                                                booking_status: bs_complete.toString(),
+                                                notification_id: nt_id_5_ride_complete
+                                            });
+                                
+                                            // Send the response
+                                            res.json({
+                                                status: "1",
+                                                payload: result[0],
+                                                message: "Ride Complete Successfully"
+                                            });
+                                        }
+                                    })
+                                    .catch((error) => {
+                                        console.error('Error fetching booking details:', error);
+                                        // Handle error response if necessary
+                                    });
+                                }
+                            })
+                            .catch(err => {
+                                helper.ThrowHtmlError(err, res);
+                            });
+                        });
+                    } else {
+                        res.json({
+                            status: "0",
+                            message: "Ride stop failed"
+                        });
+                    }
+                })
+                .catch(err => {
+                    helper.ThrowHtmlError(err, res);
+                });
+            })
+        })
+    })
+
+    app.post('/api/ride_stop_ant', (req, res) => {
         helper.Dlog(req.body)
         var reqObj = req.body
 

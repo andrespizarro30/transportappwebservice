@@ -9,7 +9,7 @@ const ut_admin = 4
 const ut_driver = 2
 const ut_user = 1
 
-module.exports.controller = (app, io, socket_list) => {
+module.exports.controller = (app, io, socket_list, admin) => {
 
     const msg_success = "successfully";
     const msg_fail = "fail";

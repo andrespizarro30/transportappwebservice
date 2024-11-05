@@ -10,7 +10,7 @@ var sql = require('mssql');
 // const config = {
 //     user: 'andresp',
 //     password: '123456',
-//     server: '192.168.10.11',
+//     server: '192.168.10.21',
 //     port: 1433,
 //     database: 'taxi_app',
 //     "options":{
@@ -41,7 +41,7 @@ const bs_cancel = 6
 const bs_no_driver = 7
 const rideCommissionVal = 0
 
-module.exports.controller = (app, io, socket_list) => {
+module.exports.controller = (app, io, socket_list, admin) => {
 
     app.post('/api/driver_rating', (req, res) => {
 

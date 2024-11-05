@@ -9,7 +9,7 @@ var sql = require('mssql');
 // const config = {
 //     user: 'andresp',
 //     password: '123456',
-//     server: '192.168.10.11',
+//     server: '192.168.10.21',
 //     port: 1433,
 //     database: 'taxi_app',
 //     "options":{
@@ -35,7 +35,7 @@ const ut_admin = 4
 const ut_driver = 2
 const ut_user = 1
 
-module.exports.controller = (app, io, socket_list) => {
+module.exports.controller = (app, io, socket_list, admin) => {
 
     const msg_success = "successfully";
     const msg_fail = "fail";

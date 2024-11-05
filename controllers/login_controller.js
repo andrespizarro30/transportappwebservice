@@ -9,7 +9,7 @@ var sql = require('mssql');
 // const config = {
 //     user: 'andresp',
 //     password: '123456',
-//     server: '192.168.10.11',
+//     server: '192.168.10.21',
 //     port: 1433,
 //     database: 'taxi_app',
 //     "options":{
@@ -35,11 +35,15 @@ const ut_admin = 4
 const ut_driver = 2
 const ut_user = 1
 
-module.exports.controller = (app, io, socket_list) => {
+var admin_fire;
+
+module.exports.controller = (app, io, socket_list, admin) => {
 
     const msg_success = "successfully";
     const msg_fail = "fail";
     const msg_invalidUser = "invalid username";
+
+    admin_fire = admin;
 
     app.get('/api/sayhi',(req,res)=>{
         res.json({ "greeting": "Hello world 123"});
@@ -189,6 +193,20 @@ module.exports.controller = (app, io, socket_list) => {
             return callback(false, []);
         });
     }
+
+    app.post('/api/user_data', (req, res) => {
+        helper.Dlog(req.body);
+        var reqObj = req.body
+        checkAccessToken(req.headers, res, (uObj) => {
+            getUserDetailUserId(uObj["user_id"], (isDone, uObj) => {
+                if(isDone){
+                    res.json({ "status": "1", "payload": uObj });
+                }else{
+                    res.json({ "status": "0", "message": "No data found" });
+                }                
+            });           
+        })
+    })
 
     app.post('/api/driver_online', (req, res) => {
         helper.Dlog(req.body);
@@ -415,7 +433,7 @@ module.exports.controller = (app, io, socket_list) => {
             checkAccessToken(req.headers, res, (uObj) => {
                 helper.CheckParameterValid(res, files, ["image"], () => {
 
-                    helper.uploadImageToFirebase(files.image[0],'profile',(imgPath)=>{
+                    helper.uploadImageToFirebase(files.image[0],'profile', admin_fire,(imgPath)=>{
 
                         if (imgPath == "error") {
                             helper.ThrowHtmlError(err, res);

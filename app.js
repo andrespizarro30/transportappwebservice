@@ -50,11 +50,19 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+const admin = require('firebase-admin');
+const serviceAccount = require('./helpers/plataformatransporte-b20ba-firebase-adminsdk-sldmg-37ecfb78f8.json');
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  storageBucket: 'plataformatransporte-b20ba.appspot.com',
+});
+
 // import express inside dynamic added.
 fs.readdirSync('./controllers').forEach((file) => {
   if (file.substr(-3) == ".js") {
     route = require('./controllers/' + file);
-    route.controller(app, io, user_socket_connect_list);
+    route.controller(app, io, user_socket_connect_list,admin);    
   }
 })
 

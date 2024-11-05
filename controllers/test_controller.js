@@ -1,4 +1,4 @@
-module.exports.controller = (app, io, user_socket_connect_list) => {
+module.exports.controller = (app, io, user_socket_connect_list, admin) => {
 
     console.log("Test controller loaded");
 

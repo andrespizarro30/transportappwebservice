@@ -197,15 +197,7 @@ module.exports = {
 
     },
 
-    uploadImageToFirebase: async (file,imagePath,callback)=>{
-
-        const admin = require('firebase-admin');
-        const serviceAccount = require('./plataformatransporte-b20ba-firebase-adminsdk-sldmg-37ecfb78f8.json');
-
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-            storageBucket: 'plataformatransporte-b20ba.appspot.com',
-            });
+    uploadImageToFirebase: async (file,imagePath, admin,callback)=>{
 
         const bucket = admin.storage().bucket();
 
