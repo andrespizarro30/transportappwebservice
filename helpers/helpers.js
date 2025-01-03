@@ -10,7 +10,7 @@ module.exports = {
 
     ImagePath:() => {
         //return "http://192.168.10.10:3001/img/";
-        return "https://firebasestorage.googleapis.com/v0/b/plataformatransporte-b20ba.appspot.com/o/";
+        return "https://firebasestorage.googleapis.com/v0/b/xxxxxxxx-b20ba.appspot.com/o/";
     },
 
     ImagePathToken:()=>{
@@ -205,6 +205,41 @@ module.exports = {
 
         var extension = file.originalFilename.substring(file.originalFilename.lastIndexOf(".") + 1)
         var imageFileName = `${imagePath}/` + fileNameGenerate(extension);
+
+        var newPath = imageSavePath + imageFileName;
+
+        const contentType = file.headers['content-type'];
+
+        const blob = bucket.file(newPath);
+          const blobStream = blob.createWriteStream({
+            metadata: {
+              contentType: contentType,
+            },
+          });
+    
+          blobStream.on('error', (error) => {
+            console.error(error);
+            return callback('error');
+          });
+    
+          blobStream.on('finish', () => {
+            return callback(blob.id);
+          });
+    
+          const fs = require('fs');
+          const readStream = fs.createReadStream(file.path);
+          readStream.pipe(blobStream);
+
+    },
+
+    uploadRacerImageToFirebase: async (file,fileName,imagePath, admin,callback)=>{
+
+        const bucket = admin.storage().bucket();
+
+        var imageSavePath = "img/";
+
+        var extension = file.originalFilename.substring(file.originalFilename.lastIndexOf(".") + 1)
+        var imageFileName = `${imagePath}/${fileName}.${extension}`;
 
         var newPath = imageSavePath + imageFileName;
 

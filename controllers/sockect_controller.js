@@ -15,11 +15,11 @@ var sql = require('mssql');
 // }
 
 const config = {
-    user: 'andrespizarro',
-    password: 'Daniel20',
-    server: 'andrespizarro.database.windows.net',
+    user: 'xxxxx',
+    password: 'xxxxxx',
+    server: 'xxxxxxx.database.windows.net',
     port: 1433,
-    database: 'DY_RFID_DataBase',
+    database: 'xxxxxxx',
     "options":{
         "encrypt":true,
         "trustServerCertificate": true
@@ -45,13 +45,19 @@ module.exports.controller = (app, io, socket_list, admin) => {
                         .query('SELECT user_id, email FROM user_detail WHERE auth_token = @auth_token;');
                 })
                 .then(result => {
-                    if (result.recordset.length > 0) {
-                        socket_list['us_' + result.recordset[0].user_id] = { 'socket_id': client.id };
+                    if(jsonObj.access_token.substring(0, 4) != 'run_'){
+                        if (result.recordset.length > 0) {
+                            socket_list['us_' + result.recordset[0].user_id] = { 'socket_id': client.id };
+                            helper.Dlog(socket_list);
+                            response = { "success": "true", "status": "1", "message": msg_success };
+                        } else {
+                            response = { "success": "false", "status": "0", "message": msg_invalidUser };
+                        }
+                    }else{
+                        socket_list['us_' + jsonObj.access_token] = { 'socket_id': client.id };
                         helper.Dlog(socket_list);
                         response = { "success": "true", "status": "1", "message": msg_success };
-                    } else {
-                        response = { "success": "false", "status": "0", "message": msg_invalidUser };
-                    }
+                    }                    
                     client.emit('UpdateSocket', response);
                 })
                 .catch(err => {

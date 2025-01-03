@@ -16,12 +16,12 @@ var dbConfig = config.get('dbConfig')
 //     }
 // }
 
-const dbSettings = {
-    user: 'andrespizarro',
-    password: 'Daniel20',
-    server: 'andrespizarro.database.windows.net',
+const config = {
+    user: 'xxxxx',
+    password: 'xxxxxx',
+    server: 'xxxxxxx.database.windows.net',
     port: 1433,
-    database: 'DY_RFID_DataBase',
+    database: 'xxxxxxx',
     "options":{
         "encrypt":true,
         "trustServerCertificate": true

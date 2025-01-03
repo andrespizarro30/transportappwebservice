@@ -20,15 +20,15 @@ var sql = require('mssql');
 // }
 
 const config = {
-    user: 'andrespizarro',
-    password: 'Daniel20',
-    server: 'andrespizarro.database.windows.net',
-    port: 1433,
-    database: 'DY_RFID_DataBase',
-    "options":{
-        "encrypt":true,
-        "trustServerCertificate": true
-    }
+  user: 'xxxxx',
+  password: 'xxxxxx',
+  server: 'xxxxxxx.database.windows.net',
+  port: 1433,
+  database: 'xxxxxxx',
+  "options":{
+      "encrypt":true,
+      "trustServerCertificate": true
+  }
 }
 
 const bs_pending = 0
